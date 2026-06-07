@@ -1,0 +1,37 @@
+# ── Secretos y configuración local ───────────────────────────────────────────
+.env
+
+# .env.enc NO se ignora: está cifrado y es necesario para despliegue en otras máquinas
+# .env.enc
+
+# ── Documentación técnica privada (NO publicar) ──────────────────────────────
+DOCUMENTACION_TECNICA_PRIVADA.md
+
+# ── Archivos de estado en tiempo de ejecución ─────────────────────────────────
+.ids.lock
+.ids.pid
+.ids_initialized
+.ids_consent
+
+# ── Logs (contienen IPs y MACs de usuarios — datos personales) ────────────────
+logs/
+*.log
+*.log.*
+
+# ── Entorno virtual Python ────────────────────────────────────────────────────
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Blacklists descargadas (se regeneran automáticamente al iniciar) ──────────
+blacklist/
+
+# ── IDEs y herramientas ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
