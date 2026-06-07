@@ -1,0 +1,150 @@
+════════════════════════════════════════════════════════════════
+              AVISO DE PRIVACIDAD
+  Sistema de Detección de Intrusos Institucional
+  Universidad Autónoma de Aguascalientes
+════════════════════════════════════════════════════════════════
+
+RESPONSABLE DEL TRATAMIENTO
+────────────────────────────
+Equipo de desarrollo IDS Institucional
+Integrantes: Oscar Manuel García Rodríguez, Carlos Franco Acosta,
+             Saúl Álvarez Gaspar
+Supervisor académico: Arturo Ocampo Silva
+Materia: Seguridad en Sistemas
+Contacto para derechos ARCO: ids.tactical931@passmail.com
+
+
+¿QUÉ DATOS RECOPILAMOS?
+────────────────────────
+Este sistema analiza el tráfico de red y registra:
+
+  • Direcciones IP de los dispositivos conectados
+  • Direcciones MAC (identificador único del adaptador de red)
+  • Nombres de dominio consultados vía DNS (sitios web visitados)
+  • Marcas de tiempo (timestamps) de cada evento de seguridad
+  • IP de destino cuando corresponde a una amenaza detectada
+
+El sistema NO recopila: nombres, apellidos, teléfonos, correos
+electrónicos de los usuarios monitoreados, ni el contenido de
+las comunicaciones.
+
+
+¿PARA QUÉ LOS USAMOS?
+──────────────────────
+Exclusivamente para detectar amenazas de seguridad informática:
+
+  1. Detección de dispositivos no autorizados en la red
+  2. Identificación de conexiones a servidores maliciosos (C2)
+  3. Detección de consultas a dominios de phishing o malware
+  4. Generación de alertas para el administrador de red
+  5. Investigación forense de IPs peligrosas
+
+Los datos NO son utilizados para publicidad, mercadotecnia ni
+ninguna finalidad comercial.
+
+
+¿QUÉ PASA CON SUS DATOS?
+─────────────────────────
+Los datos se envían por correo electrónico al administrador de
+red y se almacenan en un panel web seguro (Supabase/Netlify).
+
+  • Se eliminan automáticamente y de forma permanente a los
+    30 días mediante un proceso programado con VACUUM de
+    PostgreSQL, que garantiza que los datos no sean
+    fácilmente recuperables tras su eliminación.
+
+  • Los datos transmitidos al correo del administrador quedan
+    sujetos adicionalmente a la política de privacidad del
+    proveedor de ese buzón (Gmail u otro). El responsable
+    no controla las prácticas de privacidad de dicho tercero.
+
+  • Los datos almacenados en Supabase, Inc. (EUA) están
+    sujetos a sus términos y política de privacidad, con
+    cifrado en tránsito (HTTPS) y en reposo.
+
+
+SU DERECHO A REVOCAR EL CONSENTIMIENTO
+────────────────────────────────────────
+Puede revocar su consentimiento en CUALQUIER MOMENTO desde la
+pestaña "Estado" de esta interfaz.
+
+Al revocar su consentimiento ocurre lo siguiente de forma
+inmediata e irreversible:
+
+  • Todos sus registros en la base de datos son eliminados
+    permanentemente (DELETE + VACUUM en PostgreSQL)
+  • Los archivos de log locales del IDS son destruidos
+  • El sistema continúa funcionando en MODO LOCAL:
+    detecta amenazas y muestra alertas en pantalla, pero
+    NO almacena ningún dato en disco ni transmite nada
+    a servicios externos
+  • Las alertas existen únicamente en memoria RAM mientras
+    la ventana está abierta; al cerrarla desaparecen
+  • Puede otorgar nuevamente su consentimiento en cualquier
+    momento desde la misma interfaz
+
+Se genera un comprobante local con la fecha y hora exacta
+de la revocación.
+
+
+MODO SIN CONSENTIMIENTO
+────────────────────────
+Si decide no participar o revocar su consentimiento, el IDS
+continúa detectando amenazas y mostrando alertas locales en
+pantalla. La diferencia es que ninguna información se almacena
+en disco ni se transmite a ningún servicio externo.
+
+
+TRANSFERENCIAS DE DATOS A TERCEROS
+────────────────────────────────────
+  • Administrador de red (Gmail u otro): IPs, MACs, dominios
+    y timestamps en correos de alerta
+  • Supabase, Inc. (EUA): eventos de seguridad para el panel
+    de administración web
+  • Netlify, Inc. (EUA): metadatos de eventos para el
+    despliegue del panel web
+
+Ningún dato es vendido, arrendado ni cedido a terceros no
+mencionados en este aviso.
+
+
+SUS DERECHOS ARCO
+──────────────────
+Conforme a los artículos 22 al 30 de la Ley Federal de
+Protección de Datos Personales en Posesión de Particulares,
+usted tiene derecho a:
+
+  Acceso (A)       → Conocer qué datos suyos son tratados
+  Rectificación (R)→ Solicitar corrección de datos inexactos
+  Cancelación (C)  → Solicitar eliminación inmediata vía GUI
+                     o en 20 días hábiles vía correo
+  Oposición (O)    → Oponerse a finalidades específicas
+
+Para ejercer estos derechos contacte al responsable en:
+ids.tactical931@passmail.com
+
+También puede presentar una queja ante el Instituto Nacional
+de Transparencia, Acceso a la Información y Protección de
+Datos Personales (INAI) en: www.inai.org.mx
+
+
+MEDIDAS DE SEGURIDAD IMPLEMENTADAS
+────────────────────────────────────
+  • Cifrado en tránsito: HTTPS/TLS en todas las comunicaciones
+  • Control de acceso al panel web: autenticación JWT
+  • Credenciales protegidas en variables de entorno (.env)
+  • Eliminación permanente con pg_cron + VACUUM
+  • Row Level Security en la base de datos
+  • Modo local: sin escritura a disco ni transmisión de red
+    cuando no hay consentimiento activo
+
+
+════════════════════════════════════════════════════════════════
+Al activar el sistema usted otorga su consentimiento para el
+tratamiento de sus datos conforme a este aviso.
+Puede revocarlo en cualquier momento desde la pestaña Estado.
+════════════════════════════════════════════════════════════════
+
+Versión 1.0 — Mayo 2026
+IDS Institucional — Universidad Autónoma de Aguascalientes
+Licencia GNU/GPL v3

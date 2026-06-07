@@ -1,0 +1,10 @@
+
+# whitelist.txt - Dispositivos autorizados en la red
+
+# Formato: IP,MAC,DESCRIPCION
+
+# Las lineas que comienzan con # son comentarios y se ignoran
+
+
+
+
