@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🔍 IDS Institucional
+#  IDS Institucional
 
 **Sistema de Detección de Intrusos para redes locales**
 
