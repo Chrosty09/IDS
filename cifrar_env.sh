@@ -11,7 +11,8 @@ RED='\033[0;31m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-cd /home/kali/IDS
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DIR"
 
 echo -e "${BOLD}"
 echo "╔══════════════════════════════════════════════════════╗"

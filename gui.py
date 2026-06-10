@@ -1716,8 +1716,8 @@ class VentanaPrincipal(QMainWindow):
         if not self._monitoreo.isRunning():
             self._monitoreo.start()
 
-        python_venv = "/home/kali/IDS/venv/bin/python"
-        ids_script = "/home/kali/IDS/ids.py"
+        python_venv = str(config.BASE_DIR / "venv" / "bin" / "python")
+        ids_script  = str(config.BASE_DIR / "ids.py")
         log_ids_path = config.BASE_DIR / "logs" / "ids_arranque.log"
         env = dict(os.environ)
 

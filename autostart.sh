@@ -14,10 +14,13 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 BOLD='\033[1m'
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 AUTOSTART_DIR="$HOME/.config/autostart"
 DESKTOP_FILE="$AUTOSTART_DIR/ids-institucional.desktop"
 SUDOERS_FILE="/etc/sudoers.d/ids-institucional"
-SUDOERS_ENTRY="kali ALL=(ALL) NOPASSWD: /home/kali/IDS/venv/bin/python /home/kali/IDS/ids.py"
+SUDOERS_USER="$(whoami)"
+SUDOERS_ENTRY="$SUDOERS_USER ALL=(ALL) NOPASSWD: $DIR/venv/bin/python $DIR/ids.py"
 
 # ── Helpers ────────────────────────────────────────────
 
@@ -71,12 +74,12 @@ activar() {
 
     # 2. Crear el archivo .desktop de autostart XDG
     mkdir -p "$AUTOSTART_DIR"
-    cat > "$DESKTOP_FILE" << 'DESKTOP'
+    cat > "$DESKTOP_FILE" << DESKTOP
 [Desktop Entry]
 Type=Application
 Name=IDS Institucional
 Comment=Sistema de Detección de Intrusos - UAA
-Exec=/home/kali/IDS/venv/bin/python /home/kali/IDS/gui.py
+Exec=$DIR/venv/bin/python $DIR/gui.py
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true

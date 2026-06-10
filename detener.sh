@@ -6,7 +6,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 BOLD='\033[1m'
 
-PID_FILE="/home/kali/IDS/.ids.pid"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PID_FILE="$DIR/.ids.pid"
 
 echo -e "${BOLD}IDS Institucional — Detener sistema${NC}"
 echo "──────────────────────────────────────"
@@ -44,7 +45,7 @@ if ps -p "$PID" > /dev/null 2>&1; then
 fi
 
 # Limpiar cualquier proceso hijo de ids.py que quedara huérfano
-pkill -f "venv/bin/python /home/kali/IDS/ids.py" 2>/dev/null
+pkill -f "venv/bin/python.*ids.py" 2>/dev/null
 
 rm -f "$PID_FILE"
 echo -e "${GREEN}IDS detenido correctamente.${NC}"

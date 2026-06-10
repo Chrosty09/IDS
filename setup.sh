@@ -12,6 +12,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 BOLD='\033[1m'
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 OK="${GREEN}[  OK  ]${NC}"
 WARN="${YELLOW}[ WARN ]${NC}"
 FAIL="${RED}[ FAIL ]${NC}"
@@ -35,7 +37,7 @@ echo ""
 echo -e "${BOLD}[ 1/8 ] Usuario y privilegios${NC}"
 
 if [ "$EUID" -eq 0 ]; then
-    echo -e "$WARN  Ejecutando como root. Se recomienda ejecutar como usuario kali."
+    echo -e "$WARN  Ejecutando como root. Se recomienda ejecutar como usuario normal."
     ADVERTENCIAS=$((ADVERTENCIAS + 1))
 else
     echo -e "$OK  Usuario: $(whoami)"
@@ -49,7 +51,8 @@ else
 fi
 
 SUDOERS_FILE="/etc/sudoers.d/ids-institucional"
-SUDOERS_ENTRY="kali ALL=(ALL) NOPASSWD: /home/kali/IDS/venv/bin/python /home/kali/IDS/ids.py"
+SUDOERS_USER="$(whoami)"
+SUDOERS_ENTRY="$SUDOERS_USER ALL=(ALL) NOPASSWD: $DIR/venv/bin/python $DIR/ids.py"
 
 if [ -f "$SUDOERS_FILE" ] && grep -qF "$SUDOERS_ENTRY" "$SUDOERS_FILE" 2>/dev/null; then
     echo -e "$OK  Regla sudoers NOPASSWD para ids.py ya configurada"
@@ -91,7 +94,7 @@ fi
 echo ""
 echo -e "${BOLD}[ 3/8 ] Entorno virtual${NC}"
 
-VENV_PATH="/home/kali/IDS/venv"
+VENV_PATH="$DIR/venv"
 
 if [ -d "$VENV_PATH" ]; then
     echo -e "$OK  Entorno virtual encontrado en $VENV_PATH"
@@ -170,11 +173,11 @@ fi
 echo ""
 echo -e "${BOLD}[ 6/8 ] Archivos de configuración${NC}"
 
-if [ -f "/home/kali/IDS/.env" ]; then
+if [ -f "$DIR/.env" ]; then
     VARS_REQUERIDAS=("SMTP_USER" "SMTP_PASSWORD" "ADMIN_EMAIL" "NETWORK_INTERFACE")
     VARS_FALTANTES=()
     for var in "${VARS_REQUERIDAS[@]}"; do
-        VAL=$(grep "^${var}=" /home/kali/IDS/.env | cut -d= -f2 | tr -d ' ')
+        VAL=$(grep "^${var}=" "$DIR/.env" | cut -d= -f2 | tr -d ' ')
         if [ -z "$VAL" ]; then
             VARS_FALTANTES+=("$var")
         fi
@@ -183,24 +186,24 @@ if [ -f "/home/kali/IDS/.env" ]; then
         echo -e "$OK  .env encontrado y variables críticas definidas"
     else
         echo -e "$WARN  .env encontrado pero faltan variables: ${VARS_FALTANTES[*]}"
-        echo -e "       Edita /home/kali/IDS/.env y completa los valores faltantes."
+        echo -e "       Edita $DIR/.env y completa los valores faltantes."
         ADVERTENCIAS=$((ADVERTENCIAS + 1))
     fi
 else
-    echo -e "$FAIL  Archivo .env no encontrado en /home/kali/IDS/"
-    if [ -f "/home/kali/IDS/.env.example" ]; then
+    echo -e "$FAIL  Archivo .env no encontrado en $DIR/"
+    if [ -f "$DIR/.env.example" ]; then
         echo -e "$FIX   Copiando .env.example como plantilla..."
-        cp /home/kali/IDS/.env.example /home/kali/IDS/.env
-        chmod 600 /home/kali/IDS/.env
-        echo -e "$WARN  Edita /home/kali/IDS/.env con tus credenciales reales antes de continuar."
+        cp "$DIR/.env.example" "$DIR/.env"
+        chmod 600 "$DIR/.env"
+        echo -e "$WARN  Edita $DIR/.env con tus credenciales reales antes de continuar."
     else
         echo -e "       Crea el archivo .env con las variables requeridas."
     fi
     ERRORES=$((ERRORES + 1))
 fi
 
-if [ -f "/home/kali/IDS/whitelist.txt" ]; then
-    ENTRADAS=$(grep -v "^#" /home/kali/IDS/whitelist.txt | grep -v "^$" | wc -l)
+if [ -f "$DIR/whitelist.txt" ]; then
+    ENTRADAS=$(grep -v "^#" "$DIR/whitelist.txt" | grep -v "^$" | wc -l)
     if [ "$ENTRADAS" -gt 0 ]; then
         echo -e "$OK  whitelist.txt encontrada ($ENTRADAS dispositivos autorizados)"
     else
@@ -209,25 +212,25 @@ if [ -f "/home/kali/IDS/whitelist.txt" ]; then
     fi
 else
     echo -e "$WARN  whitelist.txt no encontrada. Creando plantilla..."
-    echo "# Formato: IP,MAC,DESCRIPCION" > /home/kali/IDS/whitelist.txt
-    echo "# Ejemplo: 192.168.1.10,AA:BB:CC:DD:EE:FF,Mi laptop" >> /home/kali/IDS/whitelist.txt
-    echo -e "$WARN  Edita /home/kali/IDS/whitelist.txt y agrega tus dispositivos."
+    echo "# Formato: IP,MAC,DESCRIPCION" > "$DIR/whitelist.txt"
+    echo "# Ejemplo: 192.168.1.10,AA:BB:CC:DD:EE:FF,Mi laptop" >> "$DIR/whitelist.txt"
+    echo -e "$WARN  Edita $DIR/whitelist.txt y agrega tus dispositivos."
     ADVERTENCIAS=$((ADVERTENCIAS + 1))
 fi
 
-if [ -f "/home/kali/IDS/docs/aviso_privacidad.txt" ]; then
+if [ -f "$DIR/docs/aviso_privacidad.txt" ]; then
     echo -e "$OK  docs/aviso_privacidad.txt encontrado"
 else
     echo -e "$WARN  docs/aviso_privacidad.txt no encontrado. La GUI mostrará un texto de placeholder."
-    mkdir -p /home/kali/IDS/docs
+    mkdir -p "$DIR/docs"
     ADVERTENCIAS=$((ADVERTENCIAS + 1))
 fi
 
-if [ -f "/home/kali/IDS/requirements.txt" ]; then
+if [ -f "$DIR/requirements.txt" ]; then
     echo -e "$OK  requirements.txt encontrado"
 else
     echo -e "$WARN  requirements.txt no encontrado. Generando desde el entorno virtual..."
-    $PIP_VENV freeze > /home/kali/IDS/requirements.txt
+    $PIP_VENV freeze > "$DIR/requirements.txt"
     echo -e "$OK  requirements.txt generado."
     ADVERTENCIAS=$((ADVERTENCIAS + 1))
 fi
@@ -237,18 +240,18 @@ echo ""
 echo -e "${BOLD}[ 7/8 ] Estructura de directorios y archivos principales${NC}"
 
 ARCHIVOS_REQUERIDOS=(
-    "/home/kali/IDS/ids.py"
-    "/home/kali/IDS/gui.py"
-    "/home/kali/IDS/config.py"
-    "/home/kali/IDS/modulos/modulo_whitelist.py"
-    "/home/kali/IDS/modulos/modulo_sitios.py"
-    "/home/kali/IDS/modulos/modulo_threat_intel.py"
-    "/home/kali/IDS/modulos/modulo_forense.py"
-    "/home/kali/IDS/utils/mailer.py"
-    "/home/kali/IDS/utils/logger.py"
-    "/home/kali/IDS/utils/threat_feed.py"
-    "/home/kali/IDS/utils/reporter.py"
-    "/home/kali/IDS/detener.sh"
+    "$DIR/ids.py"
+    "$DIR/gui.py"
+    "$DIR/config.py"
+    "$DIR/modulos/modulo_whitelist.py"
+    "$DIR/modulos/modulo_sitios.py"
+    "$DIR/modulos/modulo_threat_intel.py"
+    "$DIR/modulos/modulo_forense.py"
+    "$DIR/utils/mailer.py"
+    "$DIR/utils/logger.py"
+    "$DIR/utils/threat_feed.py"
+    "$DIR/utils/reporter.py"
+    "$DIR/detener.sh"
 )
 
 for archivo in "${ARCHIVOS_REQUERIDOS[@]}"; do
@@ -260,9 +263,9 @@ for archivo in "${ARCHIVOS_REQUERIDOS[@]}"; do
     fi
 done
 
-mkdir -p /home/kali/IDS/logs
-mkdir -p /home/kali/IDS/blacklist
-mkdir -p /home/kali/IDS/docs
+mkdir -p "$DIR/logs"
+mkdir -p "$DIR/blacklist"
+mkdir -p "$DIR/docs"
 echo -e "$OK  Directorios logs/, blacklist/, docs/ verificados"
 
 # ─── 8. CONECTIVIDAD ───────────────────────────────────────
@@ -319,9 +322,9 @@ fi
 
 echo "══════════════════════════════════════════════════════"
 
-chmod +x /home/kali/IDS/iniciar.sh 2>/dev/null
-chmod +x /home/kali/IDS/reset.sh 2>/dev/null
-chmod +x /home/kali/IDS/setup.sh 2>/dev/null
-chmod +x /home/kali/IDS/detener.sh 2>/dev/null
+chmod +x "$DIR/iniciar.sh" 2>/dev/null
+chmod +x "$DIR/reset.sh" 2>/dev/null
+chmod +x "$DIR/setup.sh" 2>/dev/null
+chmod +x "$DIR/detener.sh" 2>/dev/null
 
 exit $ERRORES

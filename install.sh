@@ -329,6 +329,13 @@ fi
 # ═══════════════════════════════════════════════════════
 paso "Archivos y directorios del proyecto"
 
+# Corregir permisos si logs/ fue creado por root en una instalación anterior
+if [ -d "$DIR/logs" ] && [ "$(stat -c '%U' "$DIR/logs" 2>/dev/null)" = "root" ]; then
+    advertencia "Directorio logs/ pertenece a root. Corrigiendo permisos..."
+    sudo chown "$USER:$USER" "$DIR/logs"
+    ok "Permisos de logs/ corregidos"
+fi
+
 for dir in logs blacklist docs; do
     mkdir -p "$DIR/$dir"
     ok "Directorio $dir/ verificado"

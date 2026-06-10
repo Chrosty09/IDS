@@ -1,8 +1,6 @@
 #!/bin/bash
-cd /home/kali/IDS
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DIR"
 
-# Desactivar inicio automático antes de limpiar el estado
-/home/kali/IDS/autostart.sh desactivar
-
-# Limpiar estado de inicialización y consentimiento
-/home/kali/IDS/venv/bin/python /home/kali/IDS/reset_prueba.py
+"$DIR/autostart.sh" desactivar
+"$DIR/venv/bin/python" "$DIR/reset_prueba.py"

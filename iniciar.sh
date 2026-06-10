@@ -6,6 +6,8 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo -e "${GREEN}"
 echo "╔══════════════════════════════════════════╗"
 echo "║     IDS INSTITUCIONAL - Iniciando...     ║"
@@ -13,29 +15,28 @@ echo "║  Universidad Autónoma de Aguascalientes  ║"
 echo "╚══════════════════════════════════════════╝"
 echo -e "${NC}"
 
-# Verificar que se ejecuta desde el directorio correcto
-cd /home/kali/IDS
+cd "$DIR"
 
 # Verificar que el entorno virtual existe
-if [ ! -d "venv" ]; then
-    echo -e "${RED}ERROR: No se encontró el entorno virtual en /home/kali/IDS/venv${NC}"
+if [ ! -d "$DIR/venv" ]; then
+    echo -e "${RED}ERROR: No se encontró el entorno virtual en $DIR/venv${NC}"
     echo "Ejecuta: python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"
     exit 1
 fi
 
 # Verificar que PyQt6 está instalado
-if ! /home/kali/IDS/venv/bin/python -c "import PyQt6" 2>/dev/null; then
+if ! "$DIR/venv/bin/python" -c "import PyQt6" 2>/dev/null; then
     echo -e "${YELLOW}PyQt6 no encontrado. Instalando...${NC}"
-    /home/kali/IDS/venv/bin/pip install PyQt6 --break-system-packages
+    "$DIR/venv/bin/pip" install PyQt6 --break-system-packages
 fi
 
 # Verificar que el aviso de privacidad existe
-if [ ! -f "/home/kali/IDS/docs/aviso_privacidad.txt" ]; then
+if [ ! -f "$DIR/docs/aviso_privacidad.txt" ]; then
     echo -e "${RED}ADVERTENCIA: No se encontró docs/aviso_privacidad.txt${NC}"
 fi
 
 # Verificar que .ids_initialized existe para saber si es primera ejecución
-if [ ! -f "/home/kali/IDS/.ids_initialized" ]; then
+if [ ! -f "$DIR/.ids_initialized" ]; then
     echo -e "${YELLOW}Primera ejecución detectada. Se mostrará la política de privacidad.${NC}"
 else
     echo -e "${GREEN}Sistema previamente inicializado.${NC}"
@@ -47,7 +48,7 @@ echo "(Cierra la ventana o el ícono de la bandeja para detener el IDS)"
 echo ""
 
 # Verificar si el IDS ya está corriendo
-PID_FILE="/home/kali/IDS/.ids.pid"
+PID_FILE="$DIR/.ids.pid"
 
 if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
@@ -64,8 +65,8 @@ echo -e "${GREEN}Iniciando IDS en segundo plano...${NC}"
 
 export DISPLAY=${DISPLAY:-:0}
 
-nohup setsid /home/kali/IDS/venv/bin/python /home/kali/IDS/gui.py \
-    > /home/kali/IDS/logs/gui_arranque.log 2>&1 &
+nohup setsid "$DIR/venv/bin/python" "$DIR/gui.py" \
+    > "$DIR/logs/gui_arranque.log" 2>&1 &
 
 # Guardar el PID para poder detenerlo después
 echo $! > "$PID_FILE"
@@ -78,7 +79,7 @@ if ps -p "$PID" > /dev/null 2>&1; then
     echo -e "El ícono aparecerá en la bandeja del sistema."
     echo -e "Para detenerlo ejecuta: ${RED}./detener.sh${NC}"
 else
-    echo -e "${RED}Error al iniciar el IDS. Revisa /home/kali/IDS/logs/gui_arranque.log${NC}"
+    echo -e "${RED}Error al iniciar el IDS. Revisa $DIR/logs/gui_arranque.log${NC}"
     rm -f "$PID_FILE"
     exit 1
 fi
