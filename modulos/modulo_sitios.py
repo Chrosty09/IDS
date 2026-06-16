@@ -185,9 +185,6 @@ class ModuloSitios:
         info = self._buscar_dominio(dominio)
 
         if info:
-            if config.MODO_LOCAL:
-                return
-
             categoria = info["categoria"]
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -198,6 +195,9 @@ class ModuloSitios:
                 f"Tipo: {categoria} | "
                 f"Fuente: {info['fuente']}"
             )
+
+            if config.MODO_LOCAL:
+                return  # detectado y mostrado por stdout, sin correo/reporte
 
             detalles = {
                 "Dominio Detectado": dominio,

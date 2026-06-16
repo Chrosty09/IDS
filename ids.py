@@ -5,18 +5,27 @@ import os
 import sys
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_BASE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _BASE)
 
-import config
+# El consentimiento es la fuente de verdad, no el entorno.
+# sudo limpia el entorno y la GUI/autostart pueden inyectar valores erróneos;
+# por eso ids.py lee .ids_consent él mismo ANTES de importar config.
+_CONSENT_FILE = os.path.join(_BASE, ".ids_consent")
+if not os.path.isfile(_CONSENT_FILE):
+    os.environ["IDS_MODO_LOCAL"] = "1"
+else:
+    os.environ.pop("IDS_MODO_LOCAL", None)
+
+import config  # config.MODO_LOCAL ahora refleja la realidad
 from utils.logger import obtener_logger
 from utils.threat_feed import descargar_todos_los_feeds
 
 log = obtener_logger("ids")
 
-_INIT_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), ".ids_initialized"
-)
-_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ids.lock")
+_INIT_FILE = os.path.join(_BASE, ".ids_initialized")
+_LOCK_FILE = os.path.join(_BASE, ".ids.lock")
+_STOP_FILE = os.path.join(_BASE, ".ids_stop")
 _lock_fd = None  # REF: IDS-001
 
 
@@ -125,17 +134,28 @@ def main() -> None:
         except Exception as e:
             log.error(f"Error en modulo_threat_intel: {e}")
 
+    if os.path.exists(_STOP_FILE):
+        os.remove(_STOP_FILE)
+
     try:
         from scapy.all import sniff
 
         log.info("Captura activa. Presiona Ctrl+C para detener.")
-        sniff(
-            iface=config.NETWORK_INTERFACE,
-            filter="ip",
-            promisc=True,
-            store=False,
-            prn=procesa_paquete,
-        )
+        # El timeout garantiza que aunque la red esté en silencio el bucle
+        # revise el centinela cada 5 s, permitiendo detener un proceso root
+        # sin necesidad de contraseña ni señales.
+        while not os.path.exists(_STOP_FILE):
+            sniff(
+                iface=config.NETWORK_INTERFACE,
+                filter="ip",
+                promisc=True,
+                store=False,
+                prn=procesa_paquete,
+                timeout=5,
+                stop_filter=lambda p: os.path.exists(_STOP_FILE),
+            )
+        log.info("Senal de detencion recibida (.ids_stop). IDS finalizado.")
+        sys.exit(0)
     except KeyboardInterrupt:
         print("\n")
         log.info(

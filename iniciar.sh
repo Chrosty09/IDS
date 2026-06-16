@@ -65,6 +65,8 @@ echo -e "${GREEN}Iniciando IDS en segundo plano...${NC}"
 
 export DISPLAY=${DISPLAY:-:0}
 
+mkdir -p "$DIR/logs"
+
 nohup setsid "$DIR/venv/bin/python" "$DIR/gui.py" \
     > "$DIR/logs/gui_arranque.log" 2>&1 &
 

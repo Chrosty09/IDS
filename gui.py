@@ -923,7 +923,7 @@ class FlujoRevocacionDialog(QDialog):
         # 1. Eliminar datos en Supabase via Netlify Function
         from utils.reporter import revocar_datos_dispositivo
 
-        revocar_datos_dispositivo()
+        exito_remoto, eliminados = revocar_datos_dispositivo()
 
         # 2. Eliminar archivos de log locales
         for ruta in [config.LOG_FILE, config.SITE_LOG_FILE]:
@@ -940,7 +940,18 @@ class FlujoRevocacionDialog(QDialog):
         # 4. Actualizar estado en la ventana principal
         self.ventana_principal._actualizar_modo("sin_consentimiento")
 
-        # 5. Generar comprobante de revocación
+        # 5. Generar comprobante de revocación (refleja el resultado real)
+        if exito_remoto:
+            resultado_txt = (
+                f"Resultado: {eliminados} registros eliminados del panel remoto.\n"
+            )
+        else:
+            resultado_txt = (
+                "Resultado: ADVERTENCIA - no se pudo confirmar el borrado remoto.\n"
+                "        Los logs locales fueron destruidos. Reintente la revocacion\n"
+                "        remota o contacte al responsable (ids.tactical931@passmail.com).\n"
+            )
+
         ts_comprobante = datetime.now().strftime("%Y%m%d_%H%M%S")
         ruta_comprobante = config.BASE_DIR / f".revocacion_{ts_comprobante}.txt"
         try:
@@ -950,21 +961,34 @@ class FlujoRevocacionDialog(QDialog):
                 f"Fecha y hora: {datetime.now().isoformat()}\n"
                 f"Acción: El usuario revocó su consentimiento y solicitó la\n"
                 f"        eliminación permanente de sus datos personales.\n"
-                f"Resultado: Datos eliminados del sistema IDS Institucional.\n",
+                f"{resultado_txt}",
                 encoding="utf-8",
             )
         except OSError as e:
             log.error(f"Error al generar comprobante: {e}")
 
         # 6. Notificar al usuario
-        QMessageBox.information(
-            self,
-            "Revocación completada",
-            "Su consentimiento ha sido revocado exitosamente.\n\n"
-            "Sus datos han sido eliminados.\n"
-            "El IDS continúa en modo local sin registrar datos.\n\n"
-            f"Comprobante generado en: {ruta_comprobante.name}",
-        )
+        if exito_remoto:
+            QMessageBox.information(
+                self,
+                "Revocación completada",
+                "Su consentimiento ha sido revocado exitosamente.\n\n"
+                f"Se eliminaron {eliminados} registros del panel remoto y los\n"
+                "logs locales fueron destruidos.\n"
+                "El IDS continúa en modo local sin registrar datos.\n\n"
+                f"Comprobante generado en: {ruta_comprobante.name}",
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Revocación parcial",
+                "Sus logs locales fueron destruidos y el IDS continúa en modo\n"
+                "local, pero NO se pudo confirmar el borrado de sus datos en el\n"
+                "panel remoto.\n\n"
+                "Reintente la revocación remota cuando haya conexión o contacte\n"
+                "al responsable (ids.tactical931@passmail.com).\n\n"
+                f"Comprobante generado en: {ruta_comprobante.name}",
+            )
 
 
 class ConfirmacionBorradoDialog(QDialog):
@@ -1218,7 +1242,7 @@ class VentanaPrincipal(QMainWindow):
     def _on_btn_consentimiento(self) -> None:
         """Abre el diálogo apropiado según el modo actual."""
         if modo == "con_consentimiento":
-            dlg = FlujoRevocacionDialog(self, self)
+            dlg = FlujoRevocacionDialog(self)
             dlg.exec()
         else:
             dlg = FlujoConsentimientoDialog(self)
@@ -1343,7 +1367,7 @@ class VentanaPrincipal(QMainWindow):
         """Abre el diálogo de detalle para la alerta seleccionada."""
         fila = self._tabla_alertas.currentRow()
         if 0 <= fila < len(self._alertas):
-            DetalleAlertaDialog(self._alertas[fila], self, self).exec()
+            DetalleAlertaDialog(self._alertas[fila], self).exec()
 
     def _limpiar_alertas(self) -> None:
         """Vacía la tabla y la lista interna de alertas de la sesión."""
@@ -1557,6 +1581,10 @@ class VentanaPrincipal(QMainWindow):
                 except OSError as e:
                     errores.append(str(e))
             self._visor_log.clear()
+            # Reiniciar el IDS si está vivo para que el FileHandler suelte el
+            # inode del archivo recién borrado y empiece uno nuevo.
+            if self._proceso_ids and self._proceso_ids.poll() is None:
+                self._reiniciar_ids()
             if errores:
                 QMessageBox.warning(self, "Advertencia", "\n".join(errores))
             else:
@@ -1713,7 +1741,10 @@ class VentanaPrincipal(QMainWindow):
         stdout/stderr del subproceso se redirigen a logs/ids_arranque.log para
         diagnóstico. Tras 2 segundos verifica que el proceso sigue vivo.
         """
-        if not self._monitoreo.isRunning():
+        # El MonitoreoThread sigue el archivo de log, que solo existe con
+        # consentimiento. En modo local las alertas llegan por stdout del
+        # subproceso y se leen con _leer_stdout_local().
+        if consentimiento_activo and not self._monitoreo.isRunning():
             self._monitoreo.start()
 
         python_venv = str(config.BASE_DIR / "venv" / "bin" / "python")
@@ -1737,12 +1768,26 @@ class VentanaPrincipal(QMainWindow):
                 cmd = [python_venv, ids_script]
             else:
                 cmd = ["sudo", "-n", python_venv, ids_script]
-            self._proceso_ids = subprocess.Popen(
-                cmd,
-                env=env,
-                stdout=log_ids_file,
-                stderr=log_ids_file,
-            )
+            if consentimiento_activo:
+                self._proceso_ids = subprocess.Popen(
+                    cmd,
+                    env=env,
+                    stdout=log_ids_file,
+                    stderr=log_ids_file,
+                )
+            else:
+                # Modo local: sin archivo de log; las alertas se leen del stdout.
+                self._proceso_ids = subprocess.Popen(
+                    cmd,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+                threading.Thread(
+                    target=self._leer_stdout_local, daemon=True
+                ).start()
             log.info(
                 f"Proceso IDS lanzado (PID {self._proceso_ids.pid}), modo={modo_txt}"
             )
@@ -1774,6 +1819,43 @@ class VentanaPrincipal(QMainWindow):
 
         threading.Thread(target=_verificar, daemon=True).start()
 
+    def _leer_stdout_local(self) -> None:
+        """En modo local las alertas llegan por stdout del subproceso,
+        nunca por archivo. Reusa el parser del MonitoreoThread y emite su
+        señal (las señales de PyQt son thread-safe; el slot corre en el hilo
+        de la GUI)."""
+        proc = self._proceso_ids
+        if proc is None or proc.stdout is None:
+            return
+        for linea in proc.stdout:
+            linea = linea.strip()
+            if "[CRITICAL" in linea or (
+                "[WARNING" in linea and "no autorizado" in linea.lower()
+            ):
+                alerta = self._monitoreo._parsear_linea(linea)
+                if alerta:
+                    self._monitoreo.nueva_alerta.emit(alerta)
+
+    def _detener_proceso_ids(self) -> None:
+        """Pide al subproceso root que termine vía archivo centinela.
+
+        El subproceso ids.py puede correr como root (sudo) y la GUI no puede
+        matarlo con señales sin contraseña; en su lugar crea .ids_stop, que el
+        bucle de captura revisa cada 5 s.
+        """
+        stop = config.BASE_DIR / ".ids_stop"
+        try:
+            stop.touch()
+        except OSError as e:
+            log.error(f"No se pudo crear .ids_stop: {e}")
+            return
+        if self._proceso_ids:
+            try:
+                self._proceso_ids.wait(timeout=10)
+                log.info("Proceso IDS detenido correctamente.")
+            except subprocess.TimeoutExpired:
+                log.warning("El proceso IDS no respondio al centinela.")
+
     def _reiniciar_ids(self) -> None:
         """
         Termina el subproceso del IDS en ejecución y lo reinicia con el modo
@@ -1781,12 +1863,7 @@ class VentanaPrincipal(QMainWindow):
         otorga o revoca el consentimiento después de la primera ejecución.
         """
         if self._proceso_ids and self._proceso_ids.poll() is None:
-            try:
-                self._proceso_ids.terminate()
-                self._proceso_ids.wait(timeout=5)
-                log.info("Proceso IDS anterior terminado correctamente.")
-            except Exception as e:
-                log.error(f"Error al terminar el proceso IDS anterior: {e}")
+            self._detener_proceso_ids()
         self.iniciar_ids()
 
 
@@ -1862,11 +1939,7 @@ class BandejaIDS(QSystemTrayIcon):
         self._ventana._monitoreo.detener()
         self._ventana._monitoreo.wait(2000)
         if self._ventana._proceso_ids and self._ventana._proceso_ids.poll() is None:
-            try:
-                self._ventana._proceso_ids.terminate()
-                self._ventana._proceso_ids.wait(timeout=5)
-            except Exception:
-                pass
+            self._ventana._detener_proceso_ids()
         QApplication.quit()
 
 

@@ -1,5 +1,6 @@
 # IDS Institucional — mailer — GNU/GPL v3
 
+import html as html_module
 import queue
 import smtplib
 import threading
@@ -123,9 +124,10 @@ def construir_html_alerta(
 ) -> str:
     """Genera el HTML estandarizado para los correos de alerta del IDS."""
     color_nivel = "#c0392b" if nivel == "EMERGENCIA" else "#e67e22"
+    titulo = html_module.escape(str(titulo))
     filas_html = "".join(
-        f"<tr><td style='padding:6px 12px;font-weight:bold;'>{k}</td>"
-        f"<td style='padding:6px 12px;'>{v}</td></tr>"
+        f"<tr><td style='padding:6px 12px;font-weight:bold;'>{html_module.escape(str(k))}</td>"
+        f"<td style='padding:6px 12px;'>{html_module.escape(str(v))}</td></tr>"
         for k, v in detalles.items()
     )
 
@@ -187,7 +189,8 @@ def _construir_html_resumen(alertas: list, es_inmediato: bool = False) -> str:
         columnas = list(items[0]["detalles"].keys())
 
         encabezados = f"<th style='{estilo_th}'>Timestamp</th>" + "".join(
-            f"<th style='{estilo_th}'>{col}</th>" for col in columnas
+            f"<th style='{estilo_th}'>{html_module.escape(str(col))}</th>"
+            for col in columnas
         )
 
         filas = ""
@@ -197,15 +200,19 @@ def _construir_html_resumen(alertas: list, es_inmediato: bool = False) -> str:
                 f"padding:6px 10px;font-size:12px;"
                 f"border-bottom:1px solid #eee;background:{fondo};"
             )
-            celdas = f"<td style='{estilo_td}'>{item['timestamp']}</td>" + "".join(
-                f"<td style='{estilo_td}'>{item['detalles'].get(col, '')}</td>"
+            celdas = (
+                f"<td style='{estilo_td}'>"
+                f"{html_module.escape(str(item['timestamp']))}</td>"
+            ) + "".join(
+                f"<td style='{estilo_td}'>"
+                f"{html_module.escape(str(item['detalles'].get(col, '')))}</td>"
                 for col in columnas
             )
             filas += f"<tr>{celdas}</tr>"
 
         secciones_html += f"""
         <h3 style="margin:20px 0 8px;color:#444;font-size:14px;border-left:4px solid {color_header};padding-left:8px;">
-          {categoria}
+          {html_module.escape(str(categoria))}
           <span style="font-weight:normal;color:#888;font-size:12px;">({len(items)} eventos)</span>
         </h3>
         <table style="{estilo_tabla}">

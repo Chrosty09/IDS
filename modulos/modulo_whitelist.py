@@ -131,10 +131,11 @@ class ModuloWhitelist:
 
         descripcion = " | ".join(motivo)
 
-        if config.MODO_LOCAL:
-            return
-
         log.warning(f"Dispositivo no autorizado detectado: {descripcion}")
+        self._registrar_alerta(clave_alerta)  # cooldown también en local
+
+        if config.MODO_LOCAL:
+            return  # detectado y mostrado por stdout, sin correo/reporte
 
         encolar_alerta_resumen(
             categoria="Dispositivo no autorizado",
@@ -150,4 +151,3 @@ class ModuloWhitelist:
             ip_origen=ip_origen,
             mac=mac_origen,
         )
-        self._registrar_alerta(clave_alerta)

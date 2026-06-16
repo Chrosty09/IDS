@@ -149,9 +149,6 @@ class ModuloThreatIntel:
             )
             return
 
-        if config.MODO_LOCAL:
-            return
-
         metadata = self.metadata_ips.get(ip_destino, {})
         categoria = metadata.get("categoria", "Desconocida")
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -162,6 +159,10 @@ class ModuloThreatIntel:
             f"Fuente: {metadata.get('fuente', 'Desconocida')} | "
             f"Interno: {ip_origen} -> Externo: {ip_destino}"
         )
+        self._registrar_alerta(ip_destino)  # cooldown también en local
+
+        if config.MODO_LOCAL:
+            return  # detectado y mostrado por stdout, sin correo/reporte/forense
 
         detalles = {
             "Tipo de Amenaza": categoria,
@@ -194,6 +195,5 @@ class ModuloThreatIntel:
                 "puerto": metadata.get("puerto", "N/A"),
             },
         )
-        self._registrar_alerta(ip_destino)
 
         self._lanzar_forense(ip_destino)

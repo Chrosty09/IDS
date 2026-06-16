@@ -12,7 +12,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 DESKTOP_FILE="$HOME/.config/autostart/ids-institucional.desktop"
-AUTOSTART_SH="/home/kali/IDS/autostart.sh"
+AUTOSTART_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/autostart.sh"
 
 echo -e "${BOLD}"
 echo "╔══════════════════════════════════════════════════════╗"
