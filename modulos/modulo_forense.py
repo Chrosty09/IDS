@@ -1,6 +1,5 @@
 # IDS Institucional — modulo_forense — GNU/GPL v3
 
-import html as html_module
 import ipaddress
 
 import requests
@@ -105,13 +104,14 @@ def investigar_ip(ip: str) -> None:
             }
 
     # REF: FO-005
-    ip_escapada = html_module.escape(str(ip))
+    # El mailer escapa el HTML de forma centralizada; aquí dejamos && y la IP
+    # en crudo para no producir doble-escape (&amp;amp;) en el correo.
     instrucciones = (
         f"1. Contactar al equipo de abuso del proveedor: {datos_registro.get('emails_abuso')}. "
-        f"2. Adjuntar los logs del IDS (/home/kali/IDS/logs/bitacora.log) como evidencia. "
-        f"3. Bloquear la IP {ip_escapada} en el firewall perimetral con: "
-        f"  iptables -I FORWARD -d {ip_escapada} -j DROP &amp;&amp; "
-        f"iptables -I OUTPUT -d {ip_escapada} -j DROP. "
+        f"2. Adjuntar los logs del IDS ({config.LOG_FILE}) como evidencia. "
+        f"3. Bloquear la IP {ip} en el firewall perimetral con: "
+        f"  iptables -I FORWARD -d {ip} -j DROP && "
+        f"iptables -I OUTPUT -d {ip} -j DROP. "
         f"4. Documentar el incidente con timestamp y evidencia capturada."
     )
 

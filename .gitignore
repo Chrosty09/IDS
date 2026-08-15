@@ -1,17 +1,18 @@
 # ── Secretos y configuración local ───────────────────────────────────────────
+# Nada de credenciales en el repo, ni siquiera cifradas: el KDF protege, pero
+# no elimina el riesgo de brute-force si la contraseña es débil.
 .env
-
-# .env.enc NO se ignora: está cifrado y es necesario para despliegue en otras máquinas
-# .env.enc
+.env.enc
+.env.runtime
 
 # ── Documentación técnica privada (NO publicar) ──────────────────────────────
 DOCUMENTACION_TECNICA_PRIVADA.md
 
 # ── Archivos de estado en tiempo de ejecución ─────────────────────────────────
-.ids.lock
-.ids.pid
-.ids_initialized
-.ids_consent
+# Estado real: IDS_STATE_DIR (/var/lib/ids en producción); runtime/ en desarrollo
+runtime/
+.ids*
+.revocacion_*.txt
 
 # ── Logs (contienen IPs y MACs de usuarios — datos personales) ────────────────
 logs/

@@ -17,8 +17,42 @@ log = obtener_logger("whitelist")
 _MAC_REGEX = re.compile(r"^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$")
 
 
+def validar_entrada_whitelist(ip: str, mac: str) -> str | None:
+    """Valida el formato de una entrada IP/MAC de la whitelist. Retorna None
+    si es válida, o una descripción del error. REF: WL-009
+
+    La usa la GUI antes de guardar: una entrada malformada nunca matchearía
+    al comparar contra el tráfico y dejaría un dispositivo mal autorizado o
+    mal desautorizado sin aviso.
+    """
+    ip = (ip or "").strip()
+    mac = (mac or "").strip()
+
+    if not ip:
+        return "falta la IP"
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        return f"IP inválida: {ip}"
+
+    if mac and not _MAC_REGEX.match(mac):
+        return f"MAC inválida: {mac} (formato AA:BB:CC:DD:EE:FF)"
+    return None
+
+
 class ModuloWhitelist:
-    """Módulo de validación de dispositivos autorizados en la red. REF: WL-001"""
+    """Módulo de validación de dispositivos autorizados en la red. REF: WL-001
+
+    Limitaciones conocidas (REF: WL-008), a considerar al operar el IDS:
+
+    1. La MAC se toma de la trama Ethernet y puede suplantarse (spoofing)
+       por un atacante con acceso local a la red. Este módulo es un control
+       DETECTIVO —el IDS es pasivo y no bloquea tráfico—: el aislamiento
+       real de un dispositivo corresponde al firewall/NAC del administrador.
+    2. Las tramas sin capa Ethernet (túneles, interfaces cooked) no permiten
+       validar MAC: se deja constancia en el log y la validación queda
+       únicamente por IP.
+    """
 
     def __init__(self):
         """REF: WL-002"""
@@ -110,6 +144,11 @@ class ModuloWhitelist:
                 log.debug(
                     f"whitelist - MAC con formato inválido ignorada: {repr(mac_raw)}"
                 )
+        else:
+            # REF: WL-008 — sin trama Ethernet no hay MAC validable
+            log.debug(
+                f"whitelist - trama sin capa Ethernet; MAC no validable para {ip_origen}"
+            )
 
         ip_autorizada = ip_origen in self.ips_autorizadas
         mac_autorizada = (not mac_origen) or (mac_origen in self.macs_autorizadas)
@@ -131,10 +170,11 @@ class ModuloWhitelist:
 
         descripcion = " | ".join(motivo)
 
-        if config.MODO_LOCAL:
-            return
-
         log.warning(f"Dispositivo no autorizado detectado: {descripcion}")
+        self._registrar_alerta(clave_alerta)  # cooldown también en local
+
+        if config.MODO_LOCAL:
+            return  # detectado y mostrado por stdout, sin correo/reporte
 
         encolar_alerta_resumen(
             categoria="Dispositivo no autorizado",
@@ -150,4 +190,3 @@ class ModuloWhitelist:
             ip_origen=ip_origen,
             mac=mac_origen,
         )
-        self._registrar_alerta(clave_alerta)

@@ -1,7 +1,9 @@
 # IDS Institucional — mailer — GNU/GPL v3
 
+import html as html_module
 import queue
 import smtplib
+import ssl
 import threading
 import time
 from collections import defaultdict
@@ -14,6 +16,11 @@ from utils.logger import obtener_logger
 
 log = obtener_logger("mailer")
 
+# REF: MA-010 — sin un contexto explícito, smtplib usa ssl._create_stdlib_context()
+# que NO verifica certificados: un MITM activo podría capturar SMTP_PASSWORD.
+# create_default_context() activa verificación de cadena + hostname (CA system).
+_SSL_CONTEXT = ssl.create_default_context()
+
 # ── cola resumen ──
 _cola_resumen: list = []
 _lock_cola = threading.Lock()
@@ -22,7 +29,10 @@ _INTERVALO_RESUMEN_SEGUNDOS: int = 300  # Nivel 1: resumen periodico cada 5 minu
 _UMBRAL_ENVIO_INMEDIATO: int = 10  # Nivel 2: disparo inmediato al superar este numero
 
 # ── cola smtp ──
-_cola_correos: queue.Queue = queue.Queue()
+# REF: MA-011 — cola acotada: ante un flood de alertas los correos se
+# descartan con aviso en lugar de crecer sin límite en memoria.
+_MAX_COLA_CORREOS = 100
+_cola_correos: queue.Queue = queue.Queue(maxsize=_MAX_COLA_CORREOS)
 _worker_activo: bool = False
 
 
@@ -39,12 +49,27 @@ def enviar_sincrono(asunto: str, cuerpo_html: str, destinatario: str = None) -> 
     mensaje.attach(parte_html)
 
     try:
-        with smtplib.SMTP_SSL(
-            config.SMTP_HOST, config.SMTP_PORT, timeout=10
-        ) as servidor:
-            servidor.ehlo()
-            servidor.login(config.SMTP_USER, config.SMTP_PASSWORD)
-            servidor.sendmail(config.SMTP_USER, destino, mensaje.as_string())
+        # REF: MA-010 — 465 = SMTPS implícito; 587 = STARTTLS (canal claro que
+        # se eleva a TLS). Ambos caminos usan el contexto verificado.
+        if config.SMTP_PORT == 587:
+            with smtplib.SMTP(
+                config.SMTP_HOST, config.SMTP_PORT, timeout=10
+            ) as servidor:
+                servidor.ehlo()
+                servidor.starttls(context=_SSL_CONTEXT)
+                servidor.ehlo()
+                servidor.login(config.SMTP_USER, config.SMTP_PASSWORD)
+                servidor.sendmail(config.SMTP_USER, destino, mensaje.as_string())
+        else:
+            with smtplib.SMTP_SSL(
+                config.SMTP_HOST,
+                config.SMTP_PORT,
+                timeout=10,
+                context=_SSL_CONTEXT,
+            ) as servidor:
+                servidor.ehlo()
+                servidor.login(config.SMTP_USER, config.SMTP_PASSWORD)
+                servidor.sendmail(config.SMTP_USER, destino, mensaje.as_string())
 
         log.info(f"Correo enviado a {destino} | Asunto: {asunto}")
         return True
@@ -57,8 +82,8 @@ def enviar_sincrono(asunto: str, cuerpo_html: str, destinatario: str = None) -> 
     except smtplib.SMTPException as e:
         log.error(f"Error SMTP al enviar correo: {e}")
         return False
-    except OSError as e:
-        log.error(f"Error de red al conectar con el servidor SMTP: {e}")
+    except (OSError, ssl.SSLError) as e:
+        log.error(f"Error de red o TLS al conectar con el servidor SMTP: {e}")
         return False
 
 
@@ -106,13 +131,20 @@ def enviar_alerta(asunto: str, cuerpo_html: str, destinatario: str = None) -> bo
 
     _iniciar_worker()
 
-    _cola_correos.put(
-        {
-            "asunto": asunto,
-            "cuerpo_html": cuerpo_html,
-            "destinatario": destinatario,
-        }
-    )
+    try:
+        _cola_correos.put_nowait(
+            {
+                "asunto": asunto,
+                "cuerpo_html": cuerpo_html,
+                "destinatario": destinatario,
+            }
+        )
+    except queue.Full:
+        # REF: MA-011
+        log.warning(
+            f"Cola de correos llena ({_MAX_COLA_CORREOS}); alerta descartada: {asunto}"
+        )
+        return False
 
     log.info(f"Correo encolado para envio: {asunto}")
     return True
@@ -123,9 +155,10 @@ def construir_html_alerta(
 ) -> str:
     """Genera el HTML estandarizado para los correos de alerta del IDS."""
     color_nivel = "#c0392b" if nivel == "EMERGENCIA" else "#e67e22"
+    titulo = html_module.escape(str(titulo))
     filas_html = "".join(
-        f"<tr><td style='padding:6px 12px;font-weight:bold;'>{k}</td>"
-        f"<td style='padding:6px 12px;'>{v}</td></tr>"
+        f"<tr><td style='padding:6px 12px;font-weight:bold;'>{html_module.escape(str(k))}</td>"
+        f"<td style='padding:6px 12px;'>{html_module.escape(str(v))}</td></tr>"
         for k, v in detalles.items()
     )
 
@@ -187,7 +220,8 @@ def _construir_html_resumen(alertas: list, es_inmediato: bool = False) -> str:
         columnas = list(items[0]["detalles"].keys())
 
         encabezados = f"<th style='{estilo_th}'>Timestamp</th>" + "".join(
-            f"<th style='{estilo_th}'>{col}</th>" for col in columnas
+            f"<th style='{estilo_th}'>{html_module.escape(str(col))}</th>"
+            for col in columnas
         )
 
         filas = ""
@@ -197,15 +231,19 @@ def _construir_html_resumen(alertas: list, es_inmediato: bool = False) -> str:
                 f"padding:6px 10px;font-size:12px;"
                 f"border-bottom:1px solid #eee;background:{fondo};"
             )
-            celdas = f"<td style='{estilo_td}'>{item['timestamp']}</td>" + "".join(
-                f"<td style='{estilo_td}'>{item['detalles'].get(col, '')}</td>"
+            celdas = (
+                f"<td style='{estilo_td}'>"
+                f"{html_module.escape(str(item['timestamp']))}</td>"
+            ) + "".join(
+                f"<td style='{estilo_td}'>"
+                f"{html_module.escape(str(item['detalles'].get(col, '')))}</td>"
                 for col in columnas
             )
             filas += f"<tr>{celdas}</tr>"
 
         secciones_html += f"""
         <h3 style="margin:20px 0 8px;color:#444;font-size:14px;border-left:4px solid {color_header};padding-left:8px;">
-          {categoria}
+          {html_module.escape(str(categoria))}
           <span style="font-weight:normal;color:#888;font-size:12px;">({len(items)} eventos)</span>
         </h3>
         <table style="{estilo_tabla}">

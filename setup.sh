@@ -50,23 +50,20 @@ else
     ADVERTENCIAS=$((ADVERTENCIAS + 1))
 fi
 
+# Hardening C1: NUNCA se crea una regla sudoers apuntando al directorio de
+# desarrollo (escribible por el usuario = escalada a root sin contraseña).
+# La única regla válida apunta al despliegue protegido en /opt/ids.
+INSTALL_DIR="${IDS_INSTALL_DIR:-/opt/ids}"
 SUDOERS_FILE="/etc/sudoers.d/ids-institucional"
 SUDOERS_USER="$(whoami)"
-SUDOERS_ENTRY="$SUDOERS_USER ALL=(ALL) NOPASSWD: $DIR/venv/bin/python $DIR/ids.py"
+SUDOERS_ENTRY="$SUDOERS_USER ALL=(root) NOPASSWD: $INSTALL_DIR/venv/bin/python $INSTALL_DIR/ids.py"
 
-if [ -f "$SUDOERS_FILE" ] && grep -qF "$SUDOERS_ENTRY" "$SUDOERS_FILE" 2>/dev/null; then
-    echo -e "$OK  Regla sudoers NOPASSWD para ids.py ya configurada"
+if sudo test -f "$SUDOERS_FILE" 2>/dev/null && sudo grep -qF "$SUDOERS_ENTRY" "$SUDOERS_FILE" 2>/dev/null; then
+    echo -e "$OK  Regla sudoers NOPASSWD (despliegue protegido) ya configurada"
 else
-    echo -e "$FIX   Configurando sudo NOPASSWD para ids.py (necesario para captura de paquetes)..."
-    echo "$SUDOERS_ENTRY" | sudo tee "$SUDOERS_FILE" > /dev/null
-    sudo chmod 440 "$SUDOERS_FILE"
-    if sudo visudo -c -f "$SUDOERS_FILE" > /dev/null 2>&1; then
-        echo -e "$OK  Regla sudoers configurada y validada correctamente."
-    else
-        echo -e "$FAIL  La regla sudoers no es válida. Eliminando para evitar problemas."
-        sudo rm -f "$SUDOERS_FILE"
-        ERRORES=$((ERRORES + 1))
-    fi
+    echo -e "$WARN  Falta la regla sudoers del despliegue protegido."
+    echo -e "       Ejecuta ./install.sh para desplegar en $INSTALL_DIR y crearla."
+    ADVERTENCIAS=$((ADVERTENCIAS + 1))
 fi
 
 # ─── 2. PYTHON ─────────────────────────────────────────────
@@ -279,12 +276,19 @@ else
     ADVERTENCIAS=$((ADVERTENCIAS + 1))
 fi
 
-SUPABASE_HOST="wioxiacrqybwhsxueava.supabase.co"
-if nc -zw3 "$SUPABASE_HOST" 443 2>/dev/null; then
-    echo -e "$OK  Supabase accesible (HTTPS)"
+# REF: B3 — antes se comprobaba un host de Supabase hardcodeado (fuga de
+# detalles de infraestructura); ahora se verifica el dashboard configurado.
+NETLIFY_URL="$(grep -E '^NETLIFY_INGEST_URL=' "$DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '[:space:]')"
+if [ -n "$NETLIFY_URL" ]; then
+    DASH_HOST="$(printf '%s' "$NETLIFY_URL" | sed -E 's#^[a-zA-Z]+://##; s#[/:].*##')"
+    if [ -n "$DASH_HOST" ] && nc -zw3 "$DASH_HOST" 443 2>/dev/null; then
+        echo -e "$OK  Dashboard ($DASH_HOST) accesible (HTTPS)"
+    else
+        echo -e "$WARN  No se pudo conectar al dashboard ($DASH_HOST). Los reportes remotos no funcionarán."
+        ADVERTENCIAS=$((ADVERTENCIAS + 1))
+    fi
 else
-    echo -e "$WARN  No se pudo conectar a Supabase. El dashboard no funcionará sin conexión."
-    ADVERTENCIAS=$((ADVERTENCIAS + 1))
+    echo -e "$WARN  NETLIFY_INGEST_URL no configurada; se omite la prueba del dashboard."
 fi
 
 if curl -sf --max-time 5 https://feodotracker.abuse.ch > /dev/null 2>&1; then
