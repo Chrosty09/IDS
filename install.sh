@@ -43,6 +43,16 @@ ORG_NAME="Universidad Autónoma de Aguascalientes"
 NETLIFY_INGEST_URL=""
 IDS_API_KEY=""
 
+# ─── Destino del despliegue protegido ────────────────────────────────────────
+# REF: CF-005 / hardening C1 — El código que se ejecuta como root NO puede
+# vivir en un directorio escribible por el usuario: sudo autentica la línea de
+# comandos, no la integridad de los archivos que ids.py importa. El instalador
+# despliega a un árbol propiedad de root y el estado escribible (logs,
+# consentimiento, whitelist, centinelas) va a /var/lib/ids (root:ids 2770).
+INSTALL_DIR="${IDS_INSTALL_DIR:-/opt/ids}"
+STATE_DIR="${IDS_STATE_DIR:-/var/lib/ids}"
+IDS_GROUP="${IDS_GROUP:-ids}"
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 _PASO=0
 _ERRORES_CHECK=0
@@ -50,7 +60,7 @@ _ERRORES_CHECK=0
 paso() {
     _PASO=$(( _PASO + 1 ))
     echo ""
-    echo -e "${BOLD}${BLUE}┌─[ Paso $_PASO/9 ] $1${NC}"
+    echo -e "${BOLD}${BLUE}┌─[ Paso $_PASO/10 ] $1${NC}"
     echo -e "${BLUE}└──────────────────────────────────────────────────────${NC}"
 }
 
@@ -127,6 +137,7 @@ PAQUETES=(
     libpcap-dev tcpdump
     dbus-x11
     openssl
+    rsync
     git
 )
 
@@ -413,15 +424,171 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════
-#  PASO 6 — Regla sudoers NOPASSWD
+#  PASO 6 — Cifrado del .env con OpenSSL (opcional)
+# ═══════════════════════════════════════════════════════
+paso "Cifrado del .env con OpenSSL (opcional)"
+
+if [ -f "$DIR/.env" ]; then
+    echo ""
+    if confirmar "¿Cifrar el archivo .env con OpenSSL para mayor seguridad?" "n"; then
+        bash "$DIR/cifrar_env.sh" --guardar
+        ok ".env.enc generado (PBKDF2 600 000 iteraciones)"
+        echo ""
+        echo -e "  ${YELLOW}El IDS puede arrancar desde .env.enc sin el .env en texto plano.${NC}"
+        echo -e "  ${YELLOW}La contraseña quedó en /etc/ids/env.password (root:root 600).${NC}"
+        echo ""
+        if confirmar "¿Eliminar el .env original en texto plano?" "n"; then
+            rm -f "$DIR/.env"
+            ok ".env eliminado. El IDS usará .env.enc."
+        else
+            ok "Ambos archivos conservados (.env y .env.enc)"
+        fi
+    else
+        ok "Cifrado omitido"
+    fi
+else
+    advertencia "No hay .env que cifrar en este momento"
+fi
+
+# ═══════════════════════════════════════════════════════
+#  PASO 7 — Despliegue protegido en INSTALL_DIR
+# ═══════════════════════════════════════════════════════
+paso "Despliegue protegido en $INSTALL_DIR (propiedad de root)"
+
+_desplegar_protegido() {
+    echo ""
+    info "Este paso separa el código (root, inmutable para ti) del estado"
+    info "escribable ($STATE_DIR, grupo $IDS_GROUP). Sin esto, cualquier"
+    info "proceso ejecutándose con tu usuario podría modificar ids.py y"
+    info "obtener root sin contraseña vía la regla sudoers."
+
+    # ── Grupo de operadores ──
+    if ! getent group "$IDS_GROUP" >/dev/null 2>&1; then
+        info "Creando grupo de operadores '$IDS_GROUP'..."
+        sudo groupadd --system "$IDS_GROUP"
+    fi
+    if ! id -nG "$(whoami)" | tr ' ' '\n' | grep -qx "$IDS_GROUP"; then
+        sudo usermod -aG "$IDS_GROUP" "$(whoami)"
+        advertencia "Tu usuario se agregó al grupo '$IDS_GROUP':"
+        advertencia "cierra la sesión y vuelve a entrar para que el IDS pueda leer/escribir el estado."
+    fi
+    ok "Grupo de operadores '$IDS_GROUP' listo"
+
+    # ── Directorio de estado (root:grupo 2770) ──
+    sudo mkdir -p "$STATE_DIR"
+    sudo chown root:"$IDS_GROUP" "$STATE_DIR"
+    sudo chmod 2770 "$STATE_DIR"
+    ok "Directorio de estado $STATE_DIR (root:$IDS_GROUP 2770)"
+
+    # ── Despliegue del código ──
+    info "Copiando código a $INSTALL_DIR (rsync, propiedad de root)..."
+    sudo mkdir -p "$INSTALL_DIR"
+    sudo rsync -a --delete \
+        --exclude '.git*' --exclude 'venv/' --exclude 'runtime/' --exclude 'logs/' \
+        --exclude 'blacklist/' --exclude '.env' --exclude '.env.enc' \
+        --exclude '.env.runtime' --exclude 'whitelist.txt' \
+        --exclude '.ids_*' --exclude '.revocacion_*' \
+        --exclude '__pycache__/' --exclude '*.pyc' \
+        --exclude 'DOCUMENTACION_TECNICA_PRIVADA.md' \
+        "$DIR/" "$INSTALL_DIR/"
+    sudo find "$INSTALL_DIR" -type d -exec chmod 755 {} +
+    sudo find "$INSTALL_DIR" -type f -exec chmod 644 {} +
+    sudo chmod 755 "$INSTALL_DIR"/*.sh 2>/dev/null || true
+    ok "Código desplegado en $INSTALL_DIR (root:root, sin escritura para tu usuario)"
+
+    # ── Entorno virtual protegido ──
+    if [ ! -x "$INSTALL_DIR/venv/bin/python" ]; then
+        info "Creando entorno virtual en $INSTALL_DIR/venv..."
+        sudo python3 -m venv "$INSTALL_DIR/venv"
+    fi
+    info "Instalando dependencias en el entorno protegido..."
+    sudo "$INSTALL_DIR/venv/bin/pip" install --upgrade pip -q
+    sudo "$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt" -q
+    ok "Entorno virtual protegido listo"
+
+    # ── Blacklists semilla (públicas; evita re-descarga en el primer arranque) ──
+    if [ -d "$DIR/blacklist" ] && [ -n "$(ls -A "$DIR/blacklist" 2>/dev/null)" ]; then
+        sudo mkdir -p "$INSTALL_DIR/blacklist"
+        sudo rsync -a "$DIR/blacklist/" "$INSTALL_DIR/blacklist/"
+        ok "Blacklists semilla copiadas"
+    else
+        sudo mkdir -p "$INSTALL_DIR/blacklist"
+    fi
+
+    # ── Configuración protegida ──
+    if [ -f "$DIR/.env" ]; then
+        sudo cp "$DIR/.env" "$INSTALL_DIR/.env"
+        sudo chown root:"$IDS_GROUP" "$INSTALL_DIR/.env"
+        sudo chmod 640 "$INSTALL_DIR/.env"
+        ok ".env desplegado (root:$IDS_GROUP 640)"
+    elif [ -f "$DIR/.env.enc" ]; then
+        sudo cp "$DIR/.env.enc" "$INSTALL_DIR/.env.enc"
+        sudo chown root:"$IDS_GROUP" "$INSTALL_DIR/.env.enc"
+        sudo chmod 640 "$INSTALL_DIR/.env.enc"
+        ok ".env.enc desplegado (root:$IDS_GROUP 640)"
+        # El motor IDS (root) descifra con /etc/ids/env.password (root-only).
+        if sudo test -f /etc/ids/env.password; then
+            ok "Contraseña de descifrado presente en /etc/ids/env.password"
+        else
+            advertencia "No existe /etc/ids/env.password: el IDS no podrá descifrar .env.enc"
+            if confirmar "¿Guardar la contraseña de descifrado ahora (root:root 600)?" "s"; then
+                read -rsp "  Contraseña de descifrado: " _PASS_ENV; echo ""
+                sudo mkdir -p /etc/ids
+                printf '%s\n' "$_PASS_ENV" | sudo tee /etc/ids/env.password > /dev/null
+                sudo chown root:root /etc/ids/env.password
+                sudo chmod 600 /etc/ids/env.password
+                unset _PASS_ENV
+                ok "Contraseña guardada en /etc/ids/env.password"
+            fi
+        fi
+    else
+        error "No se encontró .env ni .env.enc para desplegar."
+    fi
+
+    # Configuración de despliegue SIN secretos: no puede modificarse un .env.enc
+    # cifrado, así que las rutas van en .env.runtime aparte.
+    printf 'IDS_STATE_DIR=%s\nIDS_GROUP=%s\n' "$STATE_DIR" "$IDS_GROUP" | \
+        sudo tee "$INSTALL_DIR/.env.runtime" > /dev/null
+    sudo chown root:root "$INSTALL_DIR/.env.runtime"
+    sudo chmod 644 "$INSTALL_DIR/.env.runtime"
+    ok ".env.runtime generado (IDS_STATE_DIR=$STATE_DIR, IDS_GROUP=$IDS_GROUP)"
+
+    # ── Migración de estado de instalaciones previas ──
+    _migrar_estado() {
+        local origen="$1" destino="$2" modo="$3"
+        if [ -e "$origen" ] && [ ! -e "$destino" ]; then
+            sudo cp "$origen" "$destino"
+            sudo chown root:"$IDS_GROUP" "$destino"
+            sudo chmod "$modo" "$destino"
+            ok "Migrado: $(basename "$origen") → $destino"
+        fi
+    }
+    _migrar_estado "$DIR/whitelist.txt"          "$STATE_DIR/whitelist.txt"          640
+    _migrar_estado "$DIR/.ids_consent"           "$STATE_DIR/.ids_consent"           600
+    _migrar_estado "$DIR/.ids_initialized"       "$STATE_DIR/.ids_initialized"       600
+    _migrar_estado "$DIR/logs/bitacora.log"      "$STATE_DIR/bitacora.log"           640
+    _migrar_estado "$DIR/logs/sitios_visitados.log" "$STATE_DIR/sitios_visitados.log" 640
+    for comprobante in "$DIR"/.revocacion_*.txt; do
+        [ -e "$comprobante" ] || continue
+        sudo cp "$comprobante" "$STATE_DIR/"
+        sudo chown root:"$IDS_GROUP" "$STATE_DIR/$(basename "$comprobante")"
+        sudo chmod 600 "$STATE_DIR/$(basename "$comprobante")"
+        ok "Migrado: $(basename "$comprobante")"
+    done
+}
+
+_desplegar_protegido
+
+# ═══════════════════════════════════════════════════════
+#  PASO 8 — Regla sudoers NOPASSWD (solo sobre el árbol root)
 # ═══════════════════════════════════════════════════════
 paso "Regla sudoers NOPASSWD para ids.py"
 
 SUDOERS_FILE="/etc/sudoers.d/ids-institucional"
 SUDOERS_USER="$(whoami)"
-PYTHON_BIN="$DIR/venv/bin/python"
-IDS_SCRIPT="$DIR/ids.py"
-SUDOERS_ENTRY="$SUDOERS_USER ALL=(ALL) NOPASSWD: $PYTHON_BIN $IDS_SCRIPT"
+PYTHON_BIN="$INSTALL_DIR/venv/bin/python"
+IDS_SCRIPT="$INSTALL_DIR/ids.py"
+SUDOERS_ENTRY="$SUDOERS_USER ALL=(root) NOPASSWD: $PYTHON_BIN $IDS_SCRIPT"
 
 _aplicar_sudoers() {
     echo "$SUDOERS_ENTRY" | sudo tee "$SUDOERS_FILE" > /dev/null
@@ -438,7 +605,7 @@ if sudo test -f "$SUDOERS_FILE" 2>/dev/null; then
     if sudo grep -qF "$SUDOERS_ENTRY" "$SUDOERS_FILE" 2>/dev/null; then
         ok "Regla sudoers ya configurada y correcta"
     else
-        advertencia "Regla sudoers existe pero tiene rutas distintas (instalación previa). Actualizando..."
+        advertencia "Regla sudoers existe pero apunta a otra ruta (instalación previa). Actualizando..."
         _aplicar_sudoers
     fi
 else
@@ -448,35 +615,7 @@ fi
 info "Regla: $SUDOERS_ENTRY"
 
 # ═══════════════════════════════════════════════════════
-#  PASO 7 — Cifrado del .env con OpenSSL (opcional)
-# ═══════════════════════════════════════════════════════
-paso "Cifrado del .env con OpenSSL (opcional)"
-
-if [ -f "$DIR/.env" ]; then
-    echo ""
-    if confirmar "¿Cifrar el archivo .env con OpenSSL para mayor seguridad?" "n"; then
-        bash "$DIR/cifrar_env.sh"
-        ok ".env.enc generado"
-        echo ""
-        echo -e "  ${YELLOW}El IDS puede arrancar desde .env.enc sin el .env en texto plano.${NC}"
-        echo -e "  ${YELLOW}Define la contraseña: export IDS_ENV_PASSWORD='tu_contraseña'${NC}"
-        echo ""
-        if confirmar "¿Eliminar el .env original en texto plano?" "n"; then
-            rm -f "$DIR/.env"
-            ok ".env eliminado. El IDS usará .env.enc."
-            advertencia "Asegúrate de tener IDS_ENV_PASSWORD definida antes de iniciar el IDS."
-        else
-            ok "Ambos archivos conservados (.env y .env.enc)"
-        fi
-    else
-        ok "Cifrado omitido"
-    fi
-else
-    advertencia "No hay .env que cifrar en este momento"
-fi
-
-# ═══════════════════════════════════════════════════════
-#  PASO 8 — Inicio automático al arrancar sesión (opcional)
+#  PASO 9 — Inicio automático al arrancar sesión (opcional)
 # ═══════════════════════════════════════════════════════
 paso "Inicio automático al arrancar sesión (opcional)"
 
@@ -490,7 +629,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════
-#  PASO 9 — Verificación de conectividad y dependencias
+#  PASO 10 — Verificación de conectividad y dependencias
 # ═══════════════════════════════════════════════════════
 paso "Verificación de conectividad y dependencias"
 
@@ -504,6 +643,9 @@ check "OpenSSL disponible"    openssl version
 check "tcpdump disponible"    tcpdump --version
 check "Interfaz '$NETWORK_INTERFACE' existe" ip link show "$NETWORK_INTERFACE"
 check "Conectividad internet" ping -c1 -W3 8.8.8.8
+check "Despliegue en $INSTALL_DIR" test -f "$INSTALL_DIR/ids.py"
+check "Estado en $STATE_DIR" test -d "$STATE_DIR"
+check "Regla sudoers apunta a $INSTALL_DIR" sudo grep -qF "$INSTALL_DIR/ids.py" "$SUDOERS_FILE"
 
 if [ -n "${NETLIFY_INGEST_URL:-}" ]; then
     check "Netlify accesible" curl -sf --max-time 5 --head "$NETLIFY_INGEST_URL"
@@ -526,16 +668,23 @@ echo "  ║      IDS Institucional — Instalación completada     ║"
 echo "  ╚══════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 echo "  Para iniciar el IDS:"
-echo -e "    ${BOLD}./iniciar.sh${NC}"
+echo -e "    ${BOLD}./iniciar.sh${NC}   (usa el despliegue protegido en $INSTALL_DIR)"
 echo ""
 echo "  Para detenerlo:"
 echo -e "    ${BOLD}./detener.sh${NC}"
 echo ""
 echo "  Para agregar dispositivos a la whitelist:"
-echo -e "    Edita ${BOLD}whitelist.txt${NC} con formato  IP,MAC,DESCRIPCION"
+echo -e "    Desde la GUI, o edita ${BOLD}$STATE_DIR/whitelist.txt${NC}"
+echo -e "    con formato  IP,MAC,DESCRIPCION"
 echo ""
 echo "  Logs en tiempo real:"
-echo -e "    ${BOLD}tail -f logs/bitacora.log${NC}"
+echo -e "    ${BOLD}tail -f $STATE_DIR/bitacora.log${NC}"
+echo ""
+echo -e "  ${YELLOW}Seguridad del despliegue:${NC}"
+echo -e "    - Código root: ${BOLD}$INSTALL_DIR${NC} (root:root, tu usuario NO puede modificarlo)"
+echo -e "    - Estado escribible: ${BOLD}$STATE_DIR${NC} (root:$IDS_GROUP 2770)"
+echo -e "    - Si acabas de ser agregado al grupo '$IDS_GROUP', cierra sesión y"
+echo -e "      vuelve a entrar antes de iniciar el IDS."
 echo ""
 if [ -n "${SMTP_USER:-}" ]; then
     echo "  Si el correo llega a spam:"

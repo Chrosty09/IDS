@@ -86,6 +86,38 @@ chmod +x *.sh
 
 El instalador guía paso a paso la configuración del servidor SMTP, la interfaz de red y las opciones opcionales de cifrado e inicio automático.
 
+### Despliegue protegido (separación código/estado)
+
+Como el motor de detección corre como root, el instalador separa el código del
+estado escribible para impedir escaladas de privilegios:
+
+| Ruta | Propietario | Contenido |
+|------|-------------|-----------|
+| `/opt/ids` | `root:root` (755/644) | Código, venv y blacklists que ejecuta root |
+| `/var/lib/ids` | `root:ids` (2770) | Logs, consentimiento, whitelist y centinelas |
+
+La regla `sudoers NOPASSWD` apunta **únicamente** a `/opt/ids/venv/bin/python
+/opt/ids/ids.py`, un árbol que tu usuario no puede modificar. El grupo `ids`
+(donde el instalador agrega a tu usuario) permite a la GUI leer logs y editar
+la whitelist en `/var/lib/ids`. Si el instalador te agrega al grupo, cierra la
+sesión y vuelve a entrar antes de ejecutar `./iniciar.sh`.
+
+Los scripts `iniciar.sh`, `detener.sh` y `reset.sh` detectan el despliegue en
+`/opt/ids` automáticamente; el directorio del repositorio queda como copia de
+desarrollo (en desarrollo el estado se guarda en `runtime/`).
+
+### Limitaciones del control de whitelist
+
+La validación de dispositivos se basa en IP + MAC leídas de la trama Ethernet.
+Tenga presente al operar el IDS:
+
+- **La MAC puede suplantarse (spoofing)** por un atacante con acceso local.
+  El IDS es pasivo: este control es **detectivo**, no una medida de aislamiento.
+  El bloqueo real de un dispositivo corresponde al firewall/NAC del administrador.
+- Las tramas sin capa Ethernet (túneles, interfaces cooked) no permiten validar
+  la MAC; en ese caso la validación queda únicamente por IP y se deja constancia
+  en el log de depuración.
+
 Para instrucciones detalladas con capturas de pantalla, consultar el **Manual de Usuario** incluido en la documentación del proyecto.
 
 ---

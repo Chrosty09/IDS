@@ -16,11 +16,16 @@ BOLD='\033[1m'
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Hardening C1: la GUI y la regla sudoers deben apuntar al despliegue
+# protegido (root-owned), nunca al directorio de desarrollo escribible.
+INSTALL_DIR="${IDS_INSTALL_DIR:-/opt/ids}"
+[ -f "$INSTALL_DIR/gui.py" ] || INSTALL_DIR="$DIR"
+
 AUTOSTART_DIR="$HOME/.config/autostart"
 DESKTOP_FILE="$AUTOSTART_DIR/ids-institucional.desktop"
 SUDOERS_FILE="/etc/sudoers.d/ids-institucional"
 SUDOERS_USER="$(whoami)"
-SUDOERS_ENTRY="$SUDOERS_USER ALL=(ALL) NOPASSWD: $DIR/venv/bin/python $DIR/ids.py"
+SUDOERS_ENTRY="$SUDOERS_USER ALL=(root) NOPASSWD: $INSTALL_DIR/venv/bin/python $INSTALL_DIR/ids.py"
 
 # ── Helpers ────────────────────────────────────────────
 
@@ -79,7 +84,7 @@ activar() {
 Type=Application
 Name=IDS Institucional
 Comment=Sistema de Detección de Intrusos - UAA
-Exec=$DIR/venv/bin/python $DIR/gui.py
+Exec=$INSTALL_DIR/venv/bin/python $INSTALL_DIR/gui.py
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true

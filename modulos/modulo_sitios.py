@@ -1,10 +1,13 @@
 # IDS Institucional — modulo_sitios — GNU/GPL v3
 
+import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
 import config
+from utils import securefs
 from utils.logger import obtener_logger
 from utils.mailer import construir_html_alerta, enviar_alerta
 from utils.reporter import reportar_evento
@@ -14,13 +17,20 @@ log = obtener_logger("sitios")
 # REF: SI-003
 _MAX_SITIOS_LOG_BYTES = 50 * 1024 * 1024
 
+# REF: SI-011 — longitud máxima de un FQDN (RFC 1035). Un qname DNS puede
+# excederla con etiquetas relleno: acotar evita el log flooding con nombres
+# gigantes y no cambia las detecciones (ninguna blacklist contiene entradas
+# más largas que el límite).
+_MAX_DOMINIO_LEN = 253
+
 
 def _sanitizar_para_log(texto: str) -> str:
-    """REF: SI-002"""
-    return re.sub(r"[\x00-\x1f\x7f]", "", texto)
+    """REF: SI-002, SI-011 — elimina caracteres de control y acota longitud."""
+    texto = re.sub(r"[\x00-\x1f\x7f]", "", texto)
+    return texto[:_MAX_DOMINIO_LEN]
 
 
-Path(config.SITE_LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
+securefs.crear_directorio_estado(config.SITE_LOG_FILE.parent)
 
 # REF: SI-001
 ARCHIVOS_DOMINIOS = [
@@ -48,9 +58,25 @@ class ModuloSitios:
         """Carga el índice de dominios maliciosos desde las blacklists disponibles."""
         self._ruta_log = Path(config.SITE_LOG_FILE)
         self.dominios_maliciosos: dict[str, dict] = {}
+        # REF: SI-010 — los navegadores consultan el mismo dominio decenas de
+        # veces; sin cooldown cada consulta generaría correo + reporte al
+        # dashboard (flood que satura las colas del propio IDS).
+        self._ultimas_alertas: dict[str, float] = {}
+        self._cooldown_segundos = 300
 
         self._cargar_dominios_maliciosos()
         log.info(f"Modulo de sitios iniciado. Registrando en: {self._ruta_log}")
+
+    def _en_cooldown(self, clave: str) -> bool:
+        """Verifica si hay una alerta reciente para este par cliente/dominio."""
+        ultimo = self._ultimas_alertas.get(clave)
+        if ultimo is None:
+            return False
+        return (time.monotonic() - ultimo) < self._cooldown_segundos
+
+    def _registrar_alerta(self, clave: str) -> None:
+        """Guarda el timestamp actual para controlar duplicados de alertas."""
+        self._ultimas_alertas[clave] = time.monotonic()
 
     def _cargar_dominios_maliciosos(self) -> None:
         """REF: SI-005"""
@@ -120,7 +146,11 @@ class ModuloSitios:
 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             linea = f"{timestamp} | {ip_origen} | {dominio}\n"
-            with self._ruta_log.open("a", encoding="utf-8") as archivo:
+            # REF: SI-003 — apertura con O_NOFOLLOW y permisos de política de
+            # logs (0600 / 0640 root:grupo): el registro contiene hábitos de
+            # navegación y no debe ser legible por otros usuarios.
+            fd = securefs.abrir_log(self._ruta_log)
+            with os.fdopen(fd, "a", encoding="utf-8") as archivo:
                 archivo.write(linea)
             log.debug(f"Sitio registrado: {ip_origen} -> {dominio}")
         except OSError as e:
@@ -185,6 +215,14 @@ class ModuloSitios:
         info = self._buscar_dominio(dominio)
 
         if info:
+            # REF: SI-010 — cooldown por par cliente|dominio antes de alertar
+            clave_alerta = f"{ip_origen}|{dominio}"
+            if self._en_cooldown(clave_alerta):
+                log.debug(
+                    f"Alerta de dominio suprimida (cooldown activo) para {clave_alerta}"
+                )
+                return
+
             categoria = info["categoria"]
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -195,6 +233,7 @@ class ModuloSitios:
                 f"Tipo: {categoria} | "
                 f"Fuente: {info['fuente']}"
             )
+            self._registrar_alerta(clave_alerta)  # cooldown también en local
 
             if config.MODO_LOCAL:
                 return  # detectado y mostrado por stdout, sin correo/reporte

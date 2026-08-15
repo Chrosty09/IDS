@@ -59,14 +59,18 @@ from PyQt6.QtWidgets import (
 )
 
 import config
+from modulos.modulo_whitelist import validar_entrada_whitelist
+from utils import securefs
 from utils.logger import obtener_logger
 
 log = obtener_logger("gui")
 
 # ── rutas ──
-_CONSENT_FILE = config.BASE_DIR / ".ids_consent"
+# REF: GUI-022 — el estado escribible vive en STATE_DIR (config.CF-005), no
+# junto al código que corre como root.
+_CONSENT_FILE = config.CONSENT_FILE
 _PRIVACY_FILE = config.BASE_DIR / "docs" / "aviso_privacidad.txt"
-_INIT_FILE = config.BASE_DIR / ".ids_initialized"
+_INIT_FILE = config.INIT_FILE
 
 # ── estado ──
 consentimiento_activo: bool = False
@@ -291,16 +295,16 @@ _IDS_DISPOSITIVO_ID: str = _leer_mac_local()
 def _cargar_estado_consentimiento() -> None:
     """Lee .ids_consent y actualiza el estado global de consentimiento."""
     global consentimiento_activo, timestamp_consentimiento, modo
-    if _CONSENT_FILE.exists():
-        try:
-            ts = _CONSENT_FILE.read_text(encoding="utf-8").strip()
-            if ts:
-                consentimiento_activo = True
-                timestamp_consentimiento = ts
-                modo = "con_consentimiento"
-                return
-        except OSError:
-            pass
+    # REF: GUI-022 — lectura con O_NOFOLLOW: un symlink no cuenta como
+    # consentimiento.
+    contenido = securefs.leer_seguro(_CONSENT_FILE)
+    if contenido is not None:
+        ts = contenido.strip()
+        if ts:
+            consentimiento_activo = True
+            timestamp_consentimiento = ts
+            modo = "con_consentimiento"
+            return
     consentimiento_activo = False
     timestamp_consentimiento = None
     modo = "sin_consentimiento"
@@ -309,7 +313,7 @@ def _cargar_estado_consentimiento() -> None:
 def _guardar_consentimiento(ts: str) -> None:
     """Persiste el timestamp de consentimiento en disco en formato ISO 8601."""
     try:
-        _CONSENT_FILE.write_text(ts, encoding="utf-8")
+        securefs.escribir_privado(_CONSENT_FILE, ts)
     except OSError as e:
         log.error(f"No se pudo guardar consentimiento: {e}")
 
@@ -317,23 +321,22 @@ def _guardar_consentimiento(ts: str) -> None:
 def _eliminar_consentimiento() -> None:
     """Elimina el archivo de consentimiento del disco."""
     try:
-        if _CONSENT_FILE.exists():
-            os.remove(_CONSENT_FILE)
+        securefs.eliminar_seguro(_CONSENT_FILE)
     except OSError as e:
         log.error(f"No se pudo eliminar archivo de consentimiento: {e}")
 
 
 def _es_primera_ejecucion() -> bool:
     """Retorna True si el IDS nunca ha sido ejecutado en este equipo."""
-    return not _INIT_FILE.exists()
+    return not securefs.existe_sin_seguir(_INIT_FILE)
 
 
 def _marcar_inicializado() -> None:
     """Crea el marcador de primera ejecución con la fecha actual."""
     try:
-        _INIT_FILE.write_text(
+        securefs.escribir_privado(
+            _INIT_FILE,
             datetime.now().isoformat(sep=" ", timespec="seconds"),
-            encoding="utf-8",
         )
     except OSError as e:
         log.error(f"No se pudo crear marcador de inicialización: {e}")
@@ -923,6 +926,10 @@ class FlujoRevocacionDialog(QDialog):
         # 1. Eliminar datos en Supabase via Netlify Function
         from utils.reporter import revocar_datos_dispositivo
 
+        # REF: GUI-024 — el contacto del responsable sale de la configuración,
+        # no de un email hardcodeado en el código.
+        contacto = f" ({config.ADMIN_EMAIL})" if config.ADMIN_EMAIL else ""
+
         exito_remoto, eliminados = revocar_datos_dispositivo()
 
         # 2. Eliminar archivos de log locales
@@ -949,20 +956,20 @@ class FlujoRevocacionDialog(QDialog):
             resultado_txt = (
                 "Resultado: ADVERTENCIA - no se pudo confirmar el borrado remoto.\n"
                 "        Los logs locales fueron destruidos. Reintente la revocacion\n"
-                "        remota o contacte al responsable (ids.tactical931@passmail.com).\n"
+                f"        remota o contacte al responsable{contacto}.\n"
             )
 
         ts_comprobante = datetime.now().strftime("%Y%m%d_%H%M%S")
-        ruta_comprobante = config.BASE_DIR / f".revocacion_{ts_comprobante}.txt"
+        ruta_comprobante = config.STATE_DIR / f".revocacion_{ts_comprobante}.txt"
         try:
-            ruta_comprobante.write_text(
+            securefs.escribir_privado(
+                ruta_comprobante,
                 f"COMPROBANTE DE REVOCACIÓN DE CONSENTIMIENTO\n"
                 f"{'=' * 50}\n"
                 f"Fecha y hora: {datetime.now().isoformat()}\n"
                 f"Acción: El usuario revocó su consentimiento y solicitó la\n"
                 f"        eliminación permanente de sus datos personales.\n"
                 f"{resultado_txt}",
-                encoding="utf-8",
             )
         except OSError as e:
             log.error(f"Error al generar comprobante: {e}")
@@ -986,7 +993,7 @@ class FlujoRevocacionDialog(QDialog):
                 "local, pero NO se pudo confirmar el borrado de sus datos en el\n"
                 "panel remoto.\n\n"
                 "Reintente la revocación remota cuando haya conexión o contacte\n"
-                "al responsable (ids.tactical931@passmail.com).\n\n"
+                f"al responsable{contacto}.\n\n"
                 f"Comprobante generado en: {ruta_comprobante.name}",
             )
 
@@ -1460,26 +1467,44 @@ class VentanaPrincipal(QMainWindow):
             self._tabla_whitelist.removeRow(fila)
 
     def _whitelist_guardar(self) -> None:
-        """Serializa la tabla de vuelta a whitelist.txt conservando el encabezado."""
+        """Valida el formato de cada fila (REF: GUI-023) y serializa la tabla
+        de vuelta a whitelist.txt conservando el encabezado."""
         lineas = [
             "# whitelist.txt - Dispositivos autorizados en la red",
             "# Formato: IP,MAC,DESCRIPCION",
             "# Las lineas que comienzan con # son comentarios y se ignoran",
             "",
         ]
+        errores = []
         for fila in range(self._tabla_whitelist.rowCount()):
 
             def _txt(col):
                 item = self._tabla_whitelist.item(fila, col)
                 return item.text().strip() if item else ""
 
-            ip = _txt(0)
-            if not ip:
+            ip, mac, desc = _txt(0), _txt(1), _txt(2)
+            if not ip and not mac and not desc:
+                continue  # fila totalmente vacía: no se escribe ni se valida
+
+            problema = validar_entrada_whitelist(ip, mac)
+            if problema:
+                errores.append(f"Fila {fila + 1}: {problema}")
                 continue
-            lineas.append(f"{ip},{_txt(1)},{_txt(2)}")
+            lineas.append(f"{ip},{mac},{desc}")
+
+        # REF: GUI-023 — no persistir entradas que el módulo no reconocería
+        if errores:
+            QMessageBox.warning(
+                self,
+                "Whitelist inválida",
+                "Corrige estos errores antes de guardar:\n\n"
+                + "\n".join(f"  • {e}" for e in errores[:12]),
+            )
+            return
+
         try:
-            Path(config.WHITELIST_FILE).write_text(
-                "\n".join(lineas) + "\n", encoding="utf-8"
+            securefs.escribir_privado(
+                config.WHITELIST_FILE, "\n".join(lineas) + "\n"
             )
             QMessageBox.information(
                 self,
@@ -1749,8 +1774,9 @@ class VentanaPrincipal(QMainWindow):
 
         python_venv = str(config.BASE_DIR / "venv" / "bin" / "python")
         ids_script  = str(config.BASE_DIR / "ids.py")
-        log_ids_path = config.BASE_DIR / "logs" / "ids_arranque.log"
+        log_ids_path = config.ARRANQUE_LOG_FILE
         env = dict(os.environ)
+        securefs.crear_directorio_estado(config.STATE_DIR)
 
         if consentimiento_activo:
             env.pop("IDS_MODO_LOCAL", None)
@@ -1760,7 +1786,6 @@ class VentanaPrincipal(QMainWindow):
             modo_txt = "local"
 
         try:
-            log_ids_path.parent.mkdir(parents=True, exist_ok=True)
             log_ids_file = open(log_ids_path, "w", encoding="utf-8")
             # Si ya somos root (GUI lanzada con sudo -E), ejecutar directo.
             # Si no, intentar con sudo -n (requiere regla NOPASSWD en sudoers).
@@ -1843,9 +1868,9 @@ class VentanaPrincipal(QMainWindow):
         matarlo con señales sin contraseña; en su lugar crea .ids_stop, que el
         bucle de captura revisa cada 5 s.
         """
-        stop = config.BASE_DIR / ".ids_stop"
+        stop = config.STOP_FILE
         try:
-            stop.touch()
+            securefs.escribir_privado(stop, "")
         except OSError as e:
             log.error(f"No se pudo crear .ids_stop: {e}")
             return
@@ -1945,9 +1970,28 @@ class BandejaIDS(QSystemTrayIcon):
 
 # ── punto de entrada ──
 
+
+def _preparar_estado() -> None:
+    """Garantiza que STATE_DIR exista y migra una whitelist heredada del
+    directorio del código la primera vez (instalaciones previas). REF: GUI-022"""
+    securefs.crear_directorio_estado(config.STATE_DIR)
+    heredada = config.BASE_DIR / "whitelist.txt"
+    if not config.WHITELIST_FILE.exists() and heredada.exists():
+        try:
+            securefs.escribir_privado(
+                config.WHITELIST_FILE,
+                heredada.read_text(encoding="utf-8"),
+            )
+            log.info(f"Whitelist migrada a {config.WHITELIST_FILE}")
+        except OSError as e:
+            log.error(f"No se pudo migrar la whitelist: {e}")
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # No cerrar al ocultar la ventana principal
+
+    _preparar_estado()
 
     # Crear ventana y tray ANTES de iniciar cualquier captura de tráfico
     ventana = VentanaPrincipal()
