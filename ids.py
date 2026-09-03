@@ -52,6 +52,7 @@ log = obtener_logger("ids")
 _INIT_FILE = config.INIT_FILE
 _LOCK_FILE = config.LOCK_FILE
 _STOP_FILE = config.STOP_FILE
+_WHITELIST_RELOAD_FILE = config.WHITELIST_RELOAD_FILE
 _lock_fd = None  # REF: IDS-001
 
 
@@ -172,6 +173,7 @@ def main() -> None:
     # Limpiar un centinela residual. unlink nunca sigue symlinks, por lo que
     # aquí no es posible borrar un archivo arbitrario mediante un enlace.
     securefs.eliminar_seguro(_STOP_FILE)
+    securefs.eliminar_seguro(_WHITELIST_RELOAD_FILE)
 
     try:
         from scapy.all import sniff
@@ -190,6 +192,11 @@ def main() -> None:
                 timeout=5,
                 stop_filter=lambda p: securefs.existe_sin_seguir(_STOP_FILE),
             )
+            # La GUI guarda la whitelist y deja este centinela: se recarga en
+            # caliente para que los cambios apliquen sin reiniciar el motor.
+            if securefs.existe_sin_seguir(_WHITELIST_RELOAD_FILE):
+                modulo_whitelist.recargar()
+                securefs.eliminar_seguro(_WHITELIST_RELOAD_FILE)
         log.info("Senal de detencion recibida (.ids_stop). IDS finalizado.")
         sys.exit(0)
     except KeyboardInterrupt:

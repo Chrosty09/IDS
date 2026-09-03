@@ -68,6 +68,11 @@ class ModuloWhitelist:
         """Lee whitelist.txt y carga IPs y MACs autorizadas en memoria."""
         ruta = Path(config.WHITELIST_FILE)
 
+        # Reconstruir los conjuntos en cada carga (init o recarga): una entrada
+        # eliminada del archivo no debe quedar autorizada en memoria.
+        self.ips_autorizadas.clear()
+        self.macs_autorizadas.clear()
+
         if not ruta.exists():
             log.warning(
                 f"Archivo whitelist no encontrado: {ruta}. Se opera sin lista blanca."
@@ -99,6 +104,16 @@ class ModuloWhitelist:
             )
         except OSError as e:
             log.error(f"Error al leer la whitelist: {e}")
+
+    def recargar(self) -> None:
+        """Recarga la whitelist desde disco sin reiniciar el motor.
+
+        Se invoca cuando la GUI guarda cambios y deja el centinela
+        .ids_whitelist_reload (REF: WL-010). El cooldown de alertas se
+        conserva para no re-alertar dispositivos recién autorizados.
+        """
+        self._cargar_whitelist()
+        log.info("Whitelist recargada en caliente por solicitud de la GUI.")
 
     def _en_cooldown(self, clave: str) -> bool:
         """Verifica si hay una alerta reciente activa para esta clave."""
