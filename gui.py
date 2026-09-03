@@ -291,6 +291,17 @@ _IDS_DISPOSITIVO_ID: str = _leer_mac_local()
 
 # ── helpers ──
 
+_ETIQUETAS_TIPO = {
+    "threat_intel": "Threat Intelligence",
+    "sitios": "Sitios / DNS",
+    "whitelist": "Whitelist",
+}
+
+
+def _etiqueta_tipo(tipo: str) -> str:
+    """Nombre legible del tipo de alerta para la notificación emergente."""
+    return _ETIQUETAS_TIPO.get(tipo, tipo.upper().replace("_", " "))
+
 
 def _cargar_estado_consentimiento() -> None:
     """Lee .ids_consent y actualiza el estado global de consentimiento."""
@@ -307,7 +318,14 @@ def _cargar_estado_consentimiento() -> None:
             return
     consentimiento_activo = False
     timestamp_consentimiento = None
-    modo = "sin_consentimiento"
+    # Sin consentimiento el sistema opera en modo local (sin datos). El estado
+    # "sin_consentimiento" queda reservado a la primera ejecución, antes de que
+    # el usuario elija en el diálogo de política de privacidad.
+    modo = (
+        "local"
+        if securefs.existe_sin_seguir(_INIT_FILE)
+        else "sin_consentimiento"
+    )
 
 
 def _guardar_consentimiento(ts: str) -> None:
@@ -539,7 +557,7 @@ class AlertaEmergente(QWidget):
         layout.setSpacing(4)
 
         # Encabezado
-        lbl_tipo = QLabel(f"⚠  {self.alerta.get('tipo', '').upper().replace('_', ' ')}")
+        lbl_tipo = QLabel(f"⚠  {_etiqueta_tipo(self.alerta.get('tipo', ''))}")
         lbl_tipo.setTextFormat(
             Qt.TextFormat.PlainText
         )  # Evitar renderizado HTML con datos de red
@@ -763,7 +781,7 @@ class PrimerEjecucionDialog(QDialog):
     def _rechazar(self) -> None:
         """Marca el sistema como inicializado sin otorgar consentimiento (modo local)."""
         _marcar_inicializado()
-        self._ventana_principal._actualizar_modo("sin_consentimiento")
+        self._ventana_principal._actualizar_modo("local")
         self.accept()
 
 
@@ -945,7 +963,7 @@ class FlujoRevocacionDialog(QDialog):
         _eliminar_consentimiento()
 
         # 4. Actualizar estado en la ventana principal
-        self.ventana_principal._actualizar_modo("sin_consentimiento")
+        self.ventana_principal._actualizar_modo("local")
 
         # 5. Generar comprobante de revocación (refleja el resultado real)
         if exito_remoto:
@@ -1422,7 +1440,7 @@ class VentanaPrincipal(QMainWindow):
 
         nota = QLabel(
             "Doble clic en una celda para editarla.  "
-            "Los cambios toman efecto después de guardar y reiniciar el IDS."
+            "Los cambios se aplican automáticamente al guardar."
         )
         nota.setStyleSheet(f"color: {C['text2']}; font-size: 8pt; padding: 4px;")
         nota.setWordWrap(True)
@@ -1506,11 +1524,13 @@ class VentanaPrincipal(QMainWindow):
             securefs.escribir_privado(
                 config.WHITELIST_FILE, "\n".join(lineas) + "\n"
             )
+            # Centinela para que el motor recargue la whitelist sin reiniciar.
+            securefs.escribir_privado(config.WHITELIST_RELOAD_FILE, "")
             QMessageBox.information(
                 self,
                 "Guardado",
                 "Whitelist guardada correctamente.\n"
-                "Reinicia el IDS para que los cambios tomen efecto.",
+                "El IDS la recargará automáticamente en unos segundos.",
             )
         except OSError as e:
             QMessageBox.warning(
@@ -1556,19 +1576,30 @@ class VentanaPrincipal(QMainWindow):
         layout.addLayout(btns)
 
         self._cargar_log()
+        # Refresco automático del visor: la bitácora vive mientras el motor
+        # corre, y la pestaña no debe exigir clics manuales para verse al día.
+        self._timer_log = QTimer(self)
+        self._timer_log.setInterval(2000)
+        self._timer_log.timeout.connect(self._cargar_log)
+        self._timer_log.start()
         return w
 
     def _cargar_log(self) -> None:
         """Lee el archivo de bitácora y lo muestra en el visor."""
+        # Solo auto-desplaza al final si el usuario ya estaba ahí; si está
+        # leyendo entradas anteriores, no lo sacar del punto de lectura.
+        barra = self._visor_log.verticalScrollBar()
+        al_final = barra.value() >= barra.maximum() - 30
         try:
             if Path(config.LOG_FILE).exists():
                 contenido = Path(config.LOG_FILE).read_text(
                     encoding="utf-8", errors="replace"
                 )
                 self._visor_log.setPlainText(contenido)
-                self._visor_log.moveCursor(
-                    self._visor_log.textCursor().MoveOperation.End
-                )
+                if al_final:
+                    self._visor_log.moveCursor(
+                        self._visor_log.textCursor().MoveOperation.End
+                    )
             else:
                 self._visor_log.setPlainText("(El archivo de log aún no existe)")
         except OSError as e:
@@ -1816,6 +1847,9 @@ class VentanaPrincipal(QMainWindow):
             log.info(
                 f"Proceso IDS lanzado (PID {self._proceso_ids.pid}), modo={modo_txt}"
             )
+            # El subproceso heredó su propio descriptor; cerrar la copia de la
+            # GUI evita fugas de fd en cada reinicio del motor.
+            log_ids_file.close()
         except Exception as e:
             log.error(f"No se pudo lanzar el proceso del IDS: {e}")
             return
@@ -1875,11 +1909,23 @@ class VentanaPrincipal(QMainWindow):
             log.error(f"No se pudo crear .ids_stop: {e}")
             return
         if self._proceso_ids:
+            # El motor root tarda hasta ~5 s en leer el centinela; esperar con
+            # bloqueo congelaría la GUI durante ese tiempo (p. ej. al otorgar o
+            # revocar consentimiento), así que se bombean eventos mientras tanto.
+            limite = time.monotonic() + 10
             try:
-                self._proceso_ids.wait(timeout=10)
-                log.info("Proceso IDS detenido correctamente.")
+                while (
+                    self._proceso_ids.poll() is None
+                    and time.monotonic() < limite
+                ):
+                    self._proceso_ids.wait(timeout=0.5)
+                    QApplication.processEvents()
             except subprocess.TimeoutExpired:
-                log.warning("El proceso IDS no respondio al centinela.")
+                pass
+            if self._proceso_ids.poll() is None:
+                log.warning("El proceso IDS no respondió al centinela en 10 s.")
+            else:
+                log.info("Proceso IDS detenido correctamente.")
 
     def _reiniciar_ids(self) -> None:
         """
