@@ -1,2 +1,4 @@
--r requirements.txt
-pytest
+# Herramientas de CI. No las instala install.sh (ese script solo usa
+# requirements.txt) para no meterlas en el entorno de ejecución del IDS.
+ruff==0.8.6
+pytest==8.3.4

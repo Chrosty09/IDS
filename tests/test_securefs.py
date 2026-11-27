@@ -116,3 +116,33 @@ def test_crear_directorio_estado_permisos_y_no_retoque(tmp_path):
     destino.chmod(0o750)
     securefs.crear_directorio_estado(destino)
     assert stat.S_IMODE(destino.stat().st_mode) == 0o750
+
+
+# ── pruebas incorporadas desde main en la fusión ──
+
+
+def test_escritura_privada_append_y_lectura_roundtrip(tmp_path):
+    ruta = tmp_path / "dato.txt"
+    securefs.escribir_privado(ruta, "hola")
+    securefs.escribir_privado(ruta, " mundo", append=True)
+
+    assert securefs.leer_seguro(ruta) == "hola mundo"
+    assert stat.S_IMODE(ruta.stat().st_mode) == 0o600
+    assert securefs.existe_sin_seguir(ruta) is True
+
+
+def test_ausente_no_existe_y_no_se_borra(tmp_path):
+    ausente = tmp_path / "no-esta.txt"
+    assert securefs.existe_sin_seguir(ausente) is False
+    assert securefs.leer_seguro(ausente) is None
+    assert securefs.eliminar_seguro(ausente) is False
+
+
+def test_crea_directorio_de_estado_anidado(tmp_path):
+    destino = tmp_path / "estado" / "anidado"
+    creado = securefs.crear_directorio_estado(destino)
+
+    assert creado == destino
+    assert creado.is_dir()
+    if not (hasattr(os, "geteuid") and os.geteuid() == 0):
+        assert stat.S_IMODE(creado.stat().st_mode) == 0o700

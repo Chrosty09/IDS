@@ -1,40 +1,64 @@
-# Arranque de pruebas: hace que `import config` funcione sin un .env real y
-# aísla todo el estado escribible en un directorio temporal.
-#
-# config.py sale con sys.exit(1) al importarse si no existe .env/.env.enc, y
-# todos los módulos del proyecto importan config; por eso este archivo crea un
-# .env dummy ANTES de que pytest importe cualquier módulo del proyecto.
+"""Entorno desechable para importar la aplicación en las pruebas.
+
+`config` termina el proceso si no hay `.env` ni `.env.enc`. Aquí se crea un
+`.env` de placeholders (solo si el repo no tenía uno) y se fijan variables
+de entorno antes de cualquier import. Esos valores pisan lo que hubiera en
+un `.env` local porque `load_dotenv` no sobrescribe el entorno.
+
+No hay credenciales reales, red, Supabase ni interfaz gráfica.
+"""
+
+from __future__ import annotations
+
 import os
 import shutil
 import tempfile
 from pathlib import Path
 
-_BASE = Path(__file__).resolve().parent.parent
+RAIZ = Path(__file__).resolve().parents[1]
+_ENV_FILE = RAIZ / ".env"
+_CREADO_POR_TESTS = False
+_ESTADO = Path(tempfile.mkdtemp(prefix="ids-ci-estado-"))
 
-_ENV_FILE = _BASE / ".env"
-CREAMOS_ENV = not _ENV_FILE.exists()
-if CREAMOS_ENV:
+os.environ["IDS_STATE_DIR"] = str(_ESTADO)
+os.environ["IDS_MODO_LOCAL"] = "1"
+os.environ["IDS_GROUP"] = ""
+os.environ["SMTP_HOST"] = "smtp.example.invalid"
+os.environ["SMTP_PORT"] = "465"
+os.environ["SMTP_USER"] = "ci@example.invalid"
+os.environ["SMTP_PASSWORD"] = "ci-placeholder"
+os.environ["ADMIN_EMAIL"] = "admin@example.invalid"
+os.environ["NETWORK_INTERFACE"] = "lo"
+os.environ["ORG_NAME"] = "CI"
+# Cadena vacía: load_dotenv no la sustituye, así que un .env local con URLs
+# o una API key no llega a estas pruebas.
+os.environ["NETLIFY_INGEST_URL"] = ""
+os.environ["NETLIFY_BASE_URL"] = ""
+os.environ["IDS_API_KEY"] = ""
+
+if not _ENV_FILE.is_file():
     _ENV_FILE.write_text(
-        "SMTP_HOST=smtp.test.local\n"
-        "SMTP_USER=test@example.com\n"
-        "SMTP_PASSWORD=test-pass\n"
-        "ADMIN_EMAIL=admin@example.com\n"
-        "NETWORK_INTERFACE=eth0\n",
+        "\n".join(
+            [
+                "# Generado por tests/conftest.py. Placeholders, no son secretos.",
+                "SMTP_HOST=smtp.example.invalid",
+                "SMTP_PORT=465",
+                "SMTP_USER=ci@example.invalid",
+                "SMTP_PASSWORD=ci-placeholder",
+                "ADMIN_EMAIL=admin@example.invalid",
+                "NETWORK_INTERFACE=lo",
+                "ORG_NAME=CI",
+                "IDS_MODO_LOCAL=1",
+                "",
+            ]
+        ),
         encoding="utf-8",
     )
     _ENV_FILE.chmod(0o600)
-
-# Estado aislado de la sesión: WHITELIST_FILE, LOG_FILE, SITE_LOG_FILE y los
-# centinelas apuntan aquí, nunca al árbol del repositorio.
-_STATE_TMP = Path(tempfile.mkdtemp(prefix="ids-tests-"))
-os.environ["IDS_STATE_DIR"] = str(_STATE_TMP)
-
-# Modo local de fábrica: las pruebas que ejercen el camino no-local cambian
-# config.MODO_LOCAL por prueba con monkeypatch.
-os.environ["IDS_MODO_LOCAL"] = "1"
+    _CREADO_POR_TESTS = True
 
 
 def pytest_sessionfinish(session, exitstatus):
-    shutil.rmtree(_STATE_TMP, ignore_errors=True)
-    if CREAMOS_ENV:
-        _ENV_FILE.unlink(missing_ok=True)
+    if _CREADO_POR_TESTS and _ENV_FILE.is_file():
+        _ENV_FILE.unlink()
+    shutil.rmtree(_ESTADO, ignore_errors=True)

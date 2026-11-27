@@ -53,6 +53,7 @@ def _con_malicioso(mod: ModuloSitios) -> None:
 
 def test_sanitizar_elimina_controles_y_acota_longitud():
     assert _sanitizar_para_log("\x00evil\x1f.com") == "evil.com"
+    assert _sanitizar_para_log("ok.example") == "ok.example"
     assert _sanitizar_para_log("a" * 300) == "a" * 253
 
 
@@ -237,3 +238,9 @@ def test_accion_recomendada_por_categoria():
     }
     for categoria, esperado in tabla.items():
         assert esperado in ModuloSitios._accion_recomendada(None, categoria)
+
+
+def test_accion_recomendada_categoria_desconocida_es_texto_exacto():
+    assert ModuloSitios._accion_recomendada(None, "Otra") == (
+        "Investigar actividad del cliente en la red"
+    )

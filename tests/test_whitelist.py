@@ -46,6 +46,7 @@ def test_validar_entrada_sin_mac_es_valida():
 
 def test_validar_entrada_rechaza_ip_vacia_o_invalida():
     assert validar_entrada_whitelist("", "") == "falta la IP"
+    assert validar_entrada_whitelist(None, None) == "falta la IP"
     assert "IP inválida" in validar_entrada_whitelist("999.1.1.1", "")
 
 
@@ -164,3 +165,27 @@ def test_procesar_no_local_encola_y_reporta(monkeypatch, tmp_path):
 
     mod.procesar(pkt)
     assert len(encoladas) == 1  # cooldown también fuera de modo local
+
+
+# ── pruebas incorporadas desde main en la fusión ──
+
+
+def test_distingue_direcciones_locales():
+    modulo = ModuloWhitelist()
+
+    assert modulo._es_ip_local("10.1.2.3") is True
+    assert modulo._es_ip_local("172.16.0.1") is True
+    assert modulo._es_ip_local("172.31.255.255") is True
+    assert modulo._es_ip_local("192.168.0.5") is True
+    assert modulo._es_ip_local("169.254.1.1") is True
+
+    assert modulo._es_ip_local("8.8.8.8") is False
+    assert modulo._es_ip_local("172.15.0.1") is False
+    assert modulo._es_ip_local("no-es-ip") is False
+
+
+def test_cooldown_suprime_la_alerta_recien_registrada():
+    modulo = ModuloWhitelist()
+    assert modulo._en_cooldown("10.0.0.9|AA:BB:CC:DD:EE:FF") is False
+    modulo._registrar_alerta("10.0.0.9|AA:BB:CC:DD:EE:FF")
+    assert modulo._en_cooldown("10.0.0.9|AA:BB:CC:DD:EE:FF") is True

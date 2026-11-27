@@ -26,6 +26,8 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+.pytest_cache/
+.ruff_cache/
 
 # ── Blacklists descargadas (se regeneran automáticamente al iniciar) ──────────
 blacklist/
