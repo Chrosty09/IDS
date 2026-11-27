@@ -17,3 +17,6 @@ ignore = ["E402", "E741", "F401"]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    "ignore:.*DNS fields 'qd', 'an', 'ns' and 'ar'.*:DeprecationWarning:scapy",
+]
