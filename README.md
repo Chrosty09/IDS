@@ -200,6 +200,10 @@ Las pruebas ejercitan lógica pura que cabe en un runner sin pantalla:
 - saneo de dominios, búsqueda del dominio registrable y la acción recomendada
 - archivos de estado que rechazan symlinks y quedan con permisos privados
 - variables obligatorias de `config` y el rechazo de URLs que no sean `https://`
+- envío de correo por SMTPS y STARTTLS con fallos de autenticación y red simulados
+- la cola de reportes al panel: modo local, falta de configuración y saturación
+- las puertas de arranque del motor (`ids.py`): root, lock, consentimiento y configuración
+- el módulo forense: IPs públicas frente a privadas y el fallback RDAP → ipinfo
 
 `gui.py` se compila, pero las pruebas no lo importan: no se abre PyQt6 y no hace falta Xvfb. Tampoco se consulta SMTP, Netlify, Supabase ni ninguna blacklist en línea. Si falta `.env`, el conftest escribe placeholders locales (no son credenciales) y los borra al terminar.
 
