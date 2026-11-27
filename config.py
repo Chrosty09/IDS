@@ -195,6 +195,7 @@ CONSENT_FILE = STATE_DIR / ".ids_consent"
 INIT_FILE = STATE_DIR / ".ids_initialized"
 LOCK_FILE = STATE_DIR / ".ids.lock"
 STOP_FILE = STATE_DIR / ".ids_stop"
+WHITELIST_RELOAD_FILE = STATE_DIR / ".ids_whitelist_reload"
 ARRANQUE_LOG_FILE = STATE_DIR / "ids_arranque.log"
 
 
