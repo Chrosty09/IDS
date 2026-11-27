@@ -15,7 +15,12 @@ import ids
 
 @pytest.fixture
 def estado_tmp(monkeypatch, tmp_path):
-    """Centinelas y lock únicos por prueba (flock persiste por fd abierto)."""
+    """Centinelas y lock únicos por prueba (flock persiste por fd abierto).
+
+    El runner de CI no es root: sin este parche _verificar_root() sale antes
+    del comportamiento bajo prueba. test_main_sin_root_sale_1 re-vierte a 501
+    para ejercitar justamente esa denegación.
+    """
     for attr, nombre in (
         ("_INIT_FILE", "init"),
         ("_LOCK_FILE", "lock"),
@@ -23,6 +28,8 @@ def estado_tmp(monkeypatch, tmp_path):
     ):
         monkeypatch.setattr(ids, attr, tmp_path / f".ids_{nombre}")
     monkeypatch.setattr(ids.config, "STATE_DIR", tmp_path)
+    # El motor corre como root en producción; simúlalo también en CI no-root.
+    monkeypatch.setattr(ids.os, "geteuid", lambda: 0)
     return tmp_path
 
 
