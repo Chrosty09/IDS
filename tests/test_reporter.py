@@ -6,6 +6,7 @@ exceso de eventos haga crecer la memoria sin límite (cola acotada).
 """
 
 import queue
+import time
 
 import pytest
 
@@ -64,8 +65,27 @@ def test_cola_llena_descarta_sin_bloquear(monkeypatch, caplog):
     cola = queue.Queue(maxsize=1)
     cola.put_nowait({"ocupada": True})
     monkeypatch.setattr(reporter, "_cola_eventos", cola)
+    # El aviso está limitado a uno cada 30 s con time.monotonic(); en un
+    # runner recién arrancado el reloj puede llevar menos de 30 s andando y
+    # el primer aviso quedaría suprimido. Forzar ventana vencida hace la
+    # prueba independiente del uptime de la máquina.
+    monkeypatch.setattr(
+        reporter,
+        "_ultimo_aviso_llena",
+        time.monotonic() - reporter._INTERVALO_AVISO_COLA_LLENA - 1,
+    )
 
     reporter.reportar_evento(tipo="whitelist", ip_origen="1.2.3.4")  # no debe lanzar
 
     assert cola.qsize() == 1
     assert "Cola de reportes al dashboard llena" in caplog.text
+
+
+def test_aviso_cola_llena_se_limita_a_uno_por_intervalo(monkeypatch, caplog):
+    ventana_vencida = time.monotonic() - reporter._INTERVALO_AVISO_COLA_LLENA - 1
+    monkeypatch.setattr(reporter, "_ultimo_aviso_llena", ventana_vencida)
+
+    reporter._aviso_cola_llena()
+    reporter._aviso_cola_llena()  # dentro de la ventana: suprimido
+
+    assert caplog.text.count("Cola de reportes al dashboard llena") == 1
