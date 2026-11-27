@@ -209,7 +209,7 @@ Para repetirlo en local:
 python -m pip install -r requirements.txt -r requirements-dev.txt
 ruff check .
 python -m compileall -q ids.py gui.py config.py reset_prueba.py modulos utils tests
-pytest
+python -m pytest
 ```
 
 ---
