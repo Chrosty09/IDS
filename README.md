@@ -7,6 +7,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/Licencia-GNU%20GPL%20v3-green?logo=gnu)](LICENSE)
 [![Platform](https://img.shields.io/badge/Plataforma-Linux-orange?logo=linux&logoColor=white)](https://kernel.org)
+[![CI](https://github.com/Chrosty09/IDS/actions/workflows/ci.yml/badge.svg)](https://github.com/Chrosty09/IDS/actions/workflows/ci.yml)
 [![Status](https://img.shields.io/badge/Estado-Proyecto%20acad%C3%A9mico-blueviolet)]()
 
 *Proyecto final — Seguridad en Sistemas | Grupo 8B | Enero–Junio 2026*  
@@ -165,7 +166,50 @@ IDS/
 ├── whitelist.txt           # Dispositivos autorizados
 ├── docs/
 │   └── aviso_privacidad.txt
+├── tests/                  # Pruebas de humo (pytest, sin GUI ni red)
+├── .github/workflows/ci.yml
+├── pyproject.toml          # Ruff y pytest
+├── requirements-dev.txt    # ruff y pytest (no los instala el IDS)
 └── requirements.txt
+```
+
+---
+
+## CI/CD
+
+El pipeline está en [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Se dispara en estos casos:
+
+- en cada **push** a `main`
+- en cada **pull request** hacia `main`
+- al publicar una **etiqueta** `v*` (esa ejecución deja el paquete de la versión)
+- de forma **manual** (`workflow_dispatch`)
+
+El workflow no declara secretos. Python es **3.11**, la versión mínima del proyecto.
+
+| Job | Qué hace |
+|-----|----------|
+| **Verificar** | Instala `requirements.txt` y `requirements-dev.txt`. Pasa **Ruff**, comprueba la sintaxis con `python -m compileall` (incluido `gui.py`) y corre **pytest**. |
+| **Empaquetar** | Si Verificar pasa, `git archive` genera un zip del código y lo sube como artefacto `ids-fuente`. En una etiqueta `v*` ese artefacto es el paquete de la versión. La aplicación sigue siendo solo para Linux. |
+
+Ruff usa la configuración de `pyproject.toml`: errores de sintaxis e imports, sin avisar por estilo que el código ya trae (imports tardíos, imports sin uso, la variable `l`). El lint pasa sin modificar la aplicación.
+
+Las pruebas ejercitan lógica pura que cabe en un runner sin pantalla:
+
+- validación de IP y MAC de la lista blanca, y el cooldown de alertas
+- parsers de los feeds (AdGuard, hosts y texto plano), sin descargarlos
+- saneo de dominios, búsqueda del dominio registrable y la acción recomendada
+- archivos de estado que rechazan symlinks y quedan con permisos privados
+- variables obligatorias de `config` y el rechazo de URLs que no sean `https://`
+
+`gui.py` se compila, pero las pruebas no lo importan: no se abre PyQt6 y no hace falta Xvfb. Tampoco se consulta SMTP, Netlify, Supabase ni ninguna blacklist en línea. Si falta `.env`, el conftest escribe placeholders locales (no son credenciales) y los borra al terminar.
+
+Para repetirlo en local:
+
+```bash
+python -m pip install -r requirements.txt -r requirements-dev.txt
+ruff check .
+python -m compileall -q ids.py gui.py config.py reset_prueba.py modulos utils tests
+python -m pytest
 ```
 
 ---
